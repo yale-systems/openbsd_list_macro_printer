@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+
+clang-17 \
+    -fplugin=$<TARGET_FILE_DIR:openbsd_list_macro_printer>/libopenbsd_list_macro_printer.so \
+    -fsyntax-only \
+    "$@"
