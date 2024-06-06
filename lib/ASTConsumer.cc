@@ -8,7 +8,7 @@
 #include <array>
 #include <cassert>
 #include <format>
-#include <llvm-17/llvm/Support/raw_ostream.h>
+#include <llvm/Support/raw_ostream.h>
 #include <string>
 #include <vector>
 
@@ -17,10 +17,10 @@ namespace openbsd_list_macro_printer {
 /* Names of the OpenBSD list macros.
  *
  * TODO(Brent): Use an enum to represent these names instead.  */
-static const constexpr std::array<std::string, 6> OpenBSDQueueMacroDeclNames = {
-    std::string("SLIST_HEAD"),   std::string("LIST_HEAD"),
-    std::string("SIMPLEQ_HEAD"), std::string("XSIMPLEQ_HEAD"),
-    std::string("TAILQ_HEAD"),   std::string("STAILQ_HEAD")};
+static const constexpr std::array<const char*, 6> OpenBSDQueueMacroDeclNames = {
+    "SLIST_HEAD",   "LIST_HEAD",
+    "SIMPLEQ_HEAD", "XSIMPLEQ_HEAD",
+    "TAILQ_HEAD",   "STAILQ_HEAD"};
 
 /* Represents a variable declaration whose type was declared using one of the
  * OpenBSD macros defined in `src/sys/sys/queue.h`. */
