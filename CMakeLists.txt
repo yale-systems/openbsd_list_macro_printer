@@ -60,29 +60,35 @@ add_definitions(${CLANG_DEFINITIONS})
 
 # Link all our targets against these Clang libraries.
 set(Clang_LIBS
-      clangAST
-      clangASTMatchers
-      clangBasic
-      clangCodeGen
-      clangDriver
-      clangFrontend
-      clangSerialization
-      clangTooling)
+    clangAST
+    clangASTMatchers
+    clangBasic
+    clangCodeGen
+    clangDriver
+    clangFrontend
+    clangSerialization
+    clangTooling)
 link_libraries(${Clang_LIBS})
 
-# Copied from https://github.com/banach-space/clang-tutor/blob/main/lib/CMakeLists.txt
+# Copied from
+# https://github.com/banach-space/clang-tutor/blob/main/lib/CMakeLists.txt
+#
 # On Darwin (unlike on Linux), undefined symbols in shared objects are not
 # allowed at the end of the link-edit. The plugin defined here:
-#  - _is_ a shared object
-#  - references symbols from LLVM shared libraries, i.e. symbols which are
-#    undefined until those shared objects are loaded in memory (and hence
-#    _undefined_ during static linking)
+#
+# * _is_ a shared object
+#
+# * references symbols from LLVM shared libraries, i.e. symbols which are
+#   undefined until those shared objects are loaded in memory (and hence
+#   _undefined_ during static linking)
+#
 # The build will fail with errors like this:
-#    "Undefined symbols for architecture x86_64"
+#
+# "Undefined symbols for architecture x86_64"
+#
 # with various LLVM symbols being undefined. Since those symbols are later
-# loaded and resolved at runtime, these errors are false positives.
-# This behaviour can be modified via the '-undefined' OS X linker flag as
-# follows.
+# loaded and resolved at runtime, these errors are false positives. This
+# behaviour can be modified via the '-undefined' OS X linker flag as follows.
 link_libraries("$<$<PLATFORM_ID:Darwin>:-undefined dynamic_lookup>")
 
 # ##############################################################################
