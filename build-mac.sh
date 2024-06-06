@@ -5,4 +5,4 @@ cmake -S . -B build -G "Ninja Multi-Config" \
     -D Clang_DIR=/opt/homebrew/opt/llvm@17/lib/cmake/clang \
     -D CMAKE_EXPORT_COMPILE_COMMANDS=TRUE
 
-cmake --build build/ --config Debug 
+cmake --build build/ --config Release 

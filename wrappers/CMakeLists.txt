@@ -1,10 +1,8 @@
 
 
 if(APPLE)
-  message("WRAPPER DARWIN")
   set(WRAPPER openbsd_list_macro_printer_mac.in)
 else()
-  message("WRAPPER NOT DARWIN")
   set(WRAPPER openbsd_list_macro_printer.in)
 endif()
 
