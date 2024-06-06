@@ -5,10 +5,10 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "llvm/Support/raw_ostream.h"
 #include <array>
 #include <cassert>
 #include <format>
-#include <llvm-17/llvm/Support/raw_ostream.h>
 #include <string>
 #include <vector>
 
@@ -17,7 +17,7 @@ namespace openbsd_list_macro_printer {
 /* Names of the OpenBSD list macros.
  *
  * TODO(Brent): Use an enum to represent these names instead.  */
-static const constexpr std::array<std::string, 6> OpenBSDQueueMacroDeclNames = {
+static const std::array<std::string, 6> OpenBSDQueueMacroDeclNames = {
     std::string("SLIST_HEAD"),   std::string("LIST_HEAD"),
     std::string("SIMPLEQ_HEAD"), std::string("XSIMPLEQ_HEAD"),
     std::string("TAILQ_HEAD"),   std::string("STAILQ_HEAD")};
@@ -76,8 +76,8 @@ public:
   run(const clang::ast_matchers::MatchFinder::MatchResult &Result) final {
     if (const auto VarDecl = Result.Nodes.getNodeAs<clang::VarDecl>("root")) {
       const auto RecordDecl = VarDecl->getType()->getAsRecordDecl();
-      OpenBSDQueueMacroDecl MacroDecl(OpenBSDListDeclarationMacroName,
-                                      RecordDecl, VarDecl);
+      OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName,
+                                          RecordDecl, VarDecl};
       Matches.push_back(MacroDecl);
     }
   }
