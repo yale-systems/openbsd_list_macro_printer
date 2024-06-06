@@ -14,8 +14,8 @@
             "environment": {
                 "C_COMPILER": "clang-17",
                 "CXX_COMPILER": "clang++-17",
-                "LLVM_DIR": "/usr/include/llvm-17",
-                "Clang_DIR": "/usr/lib/cmake/clang-17"
+                "LLVM_DIR": "/usr/lib/llvm-17/lib/cmake/llvm",
+                "Clang_DIR": "/usr/lib/llvm-17/lib/cmake/clang"
             },
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "$env{C_COMPILER}",

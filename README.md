@@ -32,8 +32,8 @@ The following instructions assume an Ubuntu 22.04 LTS operating system:
     cmake -S . -B build -G "Ninja Multi-Config" \
         -D CMAKE_C_COMPILER=/usr/bin/clang-17 \
         -D CMAKE_CXX_COMPILER=/usr/bin/clang++-17 \
-        -D Clang_DIR=/usr/lib/cmake/clang-17 \
-        -D LLVM_DIR=/usr/include/llvm-17
+        -D Clang_DIR=/usr/lib/llvm-17/lib/cmake/clang \
+        -D LLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm
     ```
 
     or (using
