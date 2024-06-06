@@ -1,0 +1,6 @@
+#!/bin/bash
+
+/opt/homebrew/opt/llvm@17/bin/clang \
+    -fplugin=$<TARGET_FILE_DIR:openbsd_list_macro_printer>/libopenbsd_list_macro_printer.dylib \
+    -fsyntax-only \
+    "$@"
