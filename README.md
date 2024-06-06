@@ -30,17 +30,10 @@ The following instructions assume an Ubuntu 22.04 LTS operating system:
 
     ```shell
     cmake -S . -B build -G "Ninja Multi-Config" \
-        -D CMAKE_C_COMPILER=/usr/bin/clang-17 \
-        -D CMAKE_CXX_COMPILER=/usr/bin/clang++-17 \
-        -D Clang_DIR=/usr/lib/llvm-17/lib/cmake/clang \
-        -D LLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm
-    ```
-
-    or (using
-    [`CMakePresets.json`](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html))
-
-    ```shell
-    cmake --preset configure-ninja-multi-config
+        -D CMAKE_C_COMPILER=<path to clang-17 compiler> \
+        -D CMAKE_CXX_COMPILER=<path to clang++-17 compiler> \
+        -D Clang_DIR=<path to ClangConfig.cmake> \
+        -D LLVM_DIR=<path to LLVMConfig.cmake>
     ```
 
 1. Build the plugin:
@@ -49,18 +42,27 @@ The following instructions assume an Ubuntu 22.04 LTS operating system:
     cmake --build build --config=Release
     ```
 
-    or (using `CMakePresets.json`)
-
-    ```shell
-    cmake --build --preset build-ninja-multi-config-release
-    ```
-
 ## Usage
 
-Run the wrapper script like so:
+Assuming you are currently at the project root, then you can run the shared
+library on the following platforms as follows:
+
+Ubuntu:
 
 ```shell
-./build/bin/Release/openbsd_list_macro_printer test/slist.c
+/usr/bin/clang-17 \
+    -fplugin=./build/lib/Debug/libopenbsd_list_macro_printer.so \
+    -fsyntax-only \
+    test/slist.c
+```
+
+MacOS:
+
+```shell
+/opt/homebrew/opt/llvm@17/bin/clang \
+    -fplugin=./build/lib/Debug/libopenbsd_list_macro_printer.dylib \
+    -fsyntax-only \
+    test/slist.c
 ```
 
 The output should be:
