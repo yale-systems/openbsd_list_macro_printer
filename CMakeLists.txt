@@ -15,28 +15,51 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror")
 
 # ##############################################################################
-# LLVM Configuration
+# LLVM configuration
 # ##############################################################################
 find_package(LLVM REQUIRED CONFIG)
 
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
+# Call LLVM's script to add it to the project.
+include(AddLLVM)
+
+# Provide all our targets the paths to LLVM headers.
 include_directories(${LLVM_INCLUDE_DIRS})
+
+# Provide all our targets LLVM compile-time macro definitions.
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${LLVM_DEFINITIONS_LIST})
-link_libraries(${llvm_libs})
+
+# Link all our targets against these LLVM libraries.
+llvm_map_components_to_libnames(
+  LLVM_LIBS
+  AArch64
+  X86
+  ARM
+  Target
+  Option
+  Core
+  Support)
+link_libraries(${LLVM_LIBS})
 
 # ##############################################################################
-# Clang Configuration
+# Clang configuration
 # ##############################################################################
 find_package(Clang 17 REQUIRED CONFIG)
 
 message(STATUS "Found Clang ${Clang_PACKAGE_VERSION}")
 message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 
+# Provide all our targets the paths to Clang headers.
+include_directories(${CLANG_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
+
+# Provide all our targets Clang compile-time macro definitions.
+add_definitions(${CLANG_DEFINITIONS})
+
 # ##############################################################################
-# Ccache Configuration
+# Ccache configuration
 # ##############################################################################
 find_program(CCACHE_FOUND ccache)
 if(CCACHE_FOUND)
