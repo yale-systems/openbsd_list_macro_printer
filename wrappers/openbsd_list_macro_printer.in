@@ -1,5 +1,3 @@
-#!/usr/bin/bash
-
 clang-17 \
     -fplugin=$<TARGET_FILE:openbsd_list_macro_printer> \
     -fsyntax-only \
