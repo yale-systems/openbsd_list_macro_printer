@@ -63,19 +63,18 @@ include_directories(${CLANG_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
 add_definitions(${CLANG_DEFINITIONS})
 
 # Link all our targets against these Clang libraries.
-if (CLANG_LINK_CLANG_DYLIB)
-    set(CLANG_LIBS clang-cpp)
+if(CLANG_LINK_CLANG_DYLIB)
+  set(CLANG_LIBS clang-cpp)
 else()
-    set(CLANG_LIBS
-        clangAST
-        clangASTMatchers
-        clangBasic
-        clangCodeGen
-        clangDriver
-        clangFrontend
-        clangSerialization
-        clangTooling
-    )
+  set(CLANG_LIBS
+      clangAST
+      clangASTMatchers
+      clangBasic
+      clangCodeGen
+      clangDriver
+      clangFrontend
+      clangSerialization
+      clangTooling)
 endif()
 link_libraries(${Clang_LIBS})
 
