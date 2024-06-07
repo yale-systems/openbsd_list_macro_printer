@@ -33,15 +33,19 @@ separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${LLVM_DEFINITIONS_LIST})
 
 # Link all our targets against these LLVM libraries.
-llvm_map_components_to_libnames(
-  LLVM_LIBS
-  AArch64
-  X86
-  ARM
-  Target
-  Option
-  Core
-  Support)
+if(LLVM_LINK_LLVM_DYLIB)
+  set(LLVM_LIBS LLVM)
+else()
+  llvm_map_components_to_libnames(
+    LLVM_LIBS
+    AArch64
+    X86
+    ARM
+    Target
+    Option
+    Core
+    Support)
+endif()
 link_libraries(${LLVM_LIBS})
 
 # ##############################################################################
@@ -59,15 +63,20 @@ include_directories(${CLANG_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
 add_definitions(${CLANG_DEFINITIONS})
 
 # Link all our targets against these Clang libraries.
-set(Clang_LIBS
-    clangAST
-    clangASTMatchers
-    clangBasic
-    clangCodeGen
-    clangDriver
-    clangFrontend
-    clangSerialization
-    clangTooling)
+if (CLANG_LINK_CLANG_DYLIB)
+    set(CLANG_LIBS clang-cpp)
+else()
+    set(CLANG_LIBS
+        clangAST
+        clangASTMatchers
+        clangBasic
+        clangCodeGen
+        clangDriver
+        clangFrontend
+        clangSerialization
+        clangTooling
+    )
+endif()
 link_libraries(${Clang_LIBS})
 
 # Copied from
