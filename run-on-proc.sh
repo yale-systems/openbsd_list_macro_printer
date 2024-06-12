@@ -1,10 +1,9 @@
-/opt/homebrew/opt/llvm@17/bin/clang \
-    -fplugin=./build/lib/Debug/libopenbsd_list_macro_printer.dylib \
+/usr/local/llvm17/bin/clang \
+    -fplugin=./build/lib/Debug/libopenbsd_list_macro_printer.so \
     -fsyntax-only \
     -nostdinc \
     -nostdlib \
-    -I /Volumes/Repos/Yale/freebsd-src/include \
-    -I /Volumes/Repos/Yale/freebsd-src/sys \
-    -I /Volumes/Repos/Yale/freebsd-src/machine \
-    /Volumes/Repos/Yale/freebsd-src/sys/sys/proc.h
+    /usr/src/sys/kern/kern_proc.c
+
+
 
