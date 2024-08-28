@@ -24,6 +24,31 @@ The following instructions assume an Ubuntu 22.04 LTS operating system:
   sudo apt install llvm-17 clang-17 libclang-17-dev
   ```
 
+For installation on the FreeBSD operating system, follow these instructions:
+
+- Ninja
+  
+  ```shell
+    sudo pkg install ninja
+  ```
+
+- CMake 3.29.1
+  
+  ```shell
+    sudo pkg install cmake
+  ```
+
+- LLVM 17
+
+  First, check that llvm version 17 is available by running: 
+  ```shell
+    sudo pkg search llvm
+  ```
+
+  If llvm-17 is available:
+  ```shell
+    sudo pkg install llvm17
+  ```
 ### Building the Clang plugin
 
 1. Configure the plugin:
@@ -61,6 +86,14 @@ MacOS:
 ```shell
 /opt/homebrew/opt/llvm@17/bin/clang \
     -fplugin=./build/lib/Debug/libopenbsd_list_macro_printer.dylib \
+    -fsyntax-only \
+    test/slist.c
+```
+
+FreeBSD:
+```shell
+/usr/local/llvm17/bin/clang \
+    -fplugin=./build/lib/Release/libopenbsd_list_macro_printer.dylib \
     -fsyntax-only \
     test/slist.c
 ```
