@@ -205,6 +205,43 @@ void PrintListIteratorForSLIST_HEADDecl(clang::ASTContext &Ctx,
   llvm::outs() << "    }\n}\n";
 }
 
+/* Prints the list iterator function for a declaration declared using the
+ * LIST_HEAD() macro. */
+void PrintListIteratorForLIST_HEADDecl(clang::ASTContext &Ctx,
+                                        OpenBSDQueueMacroDecl LIST_HEADDecl) {
+  auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
+  auto RecordDecl = LIST_HEADDecl.RecordDecl;
+  const clang::FieldDecl *lh_firstFieldRecordDeclLIST_ENTRYField;
+  auto lh_firstFieldDecl = *RecordDecl->field_begin();
+  auto lh_firstFieldRecordDecl =
+      lh_firstFieldDecl->getType()->getPointeeType()->getAsRecordDecl();
+
+  /* Find the field in the entry declaration that was expanded from
+   * LIST_ENTRY(). */
+  using namespace clang::ast_matchers;
+  MatchFinder Finder;
+  FieldDeclarationMatcherCallback FDMC;
+  DeclarationMatcher LIST_ENTRYMatcher = recordDecl(has(
+      fieldDecl(
+          hasType(recordDecl(isExpandedFromMacro(std::string("LIST_ENTRY")))))
+          .bind("root")));
+  Finder.addMatcher(LIST_ENTRYMatcher, &FDMC);
+  Finder.match(*lh_firstFieldRecordDecl, Ctx);
+  /* LIST_ENTRY() should be called exactly once in the declaration of list's
+   * entry type. */
+  assert(1 == FDMC.Matches.size());
+  lh_firstFieldRecordDeclLIST_ENTRYField = FDMC.Matches.front();
+
+  llvm::outs() << std::format(
+      "{{\n    struct {} * __openbsd_list_iterator;\n    "
+      "LIST_FOREACH(__openbsd_list_iterator, &{}, {}) {{\n",
+      lh_firstFieldRecordDecl->getNameAsString(), DeclName,
+      lh_firstFieldRecordDeclLIST_ENTRYField->getNameAsString());
+  PrintPrintersForRecordDeclFields(8u, "__openbsd_list_iterator",
+                                   lh_firstFieldRecordDecl);
+  llvm::outs() << "    }\n}\n";
+}
+
 /* We only define this constructor because Clang requires it. */
 ASTConsumer::ASTConsumer(clang::CompilerInstance &CI) { (void)CI; }
 
@@ -227,6 +264,8 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       /* TODO(Brent): Add printers for the other declaration macros. */
       if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         PrintListIteratorForSLIST_HEADDecl(Ctx, Match);
+      } else if("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        PrintListIteratorForLIST_HEADDecl(Ctx, Match);
       }
       first = false;
     }
