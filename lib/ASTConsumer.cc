@@ -11,6 +11,8 @@
 #include <format>
 #include <string>
 #include <vector>
+#include <unordered_set>
+#include <fstream>
 
 namespace openbsd_list_macro_printer {
 
@@ -139,10 +141,8 @@ FindOpenBSDQueueMacroDecls(clang::ASTContext &Ctx,
  *     printf("%s", np->b);
  * ```
  */
-void PrintPrintersForRecordDeclFields(unsigned indent,
-                                      std::string RecordDeclVarName,
-                                      const clang::RecordDecl *RecordDecl) {
-
+void PrintPrintersForRecordDeclFields(unsigned indent, std::string RecordDeclVarName,
+                                      const clang::RecordDecl *RecordDecl, std::ofstream &file) {
   for (const auto FieldDecl : RecordDecl->fields()) {
     std::string FormatSpecifier;
     std::string PrintfArgument =
@@ -151,64 +151,22 @@ void PrintPrintersForRecordDeclFields(unsigned indent,
     if (Type->isPointerType() && Type->getPointeeType()->isCharType()) {
       FormatSpecifier = "%s";
     }
-    /* If we didn't already determine a format specifier for this type, try to
-     * do so now. */
     if (Type->isUnsignedIntegerType()) {
       FormatSpecifier = "%u";
     } else if (Type->isSignedIntegerType()) {
       FormatSpecifier = "%d";
     }
-    /* If we inferred a type for this field, print out its printer. */
+
     if (!FormatSpecifier.empty()) {
-      llvm::outs() << std::format("{}printf(\"{}\", {});\n",
-                                  std::string(indent, ' '), FormatSpecifier,
-                                  PrintfArgument);
+      file << std::string(indent, ' ') << std::format("printf(\"{}\", {});\n",
+                                  FormatSpecifier, PrintfArgument);
     }
   }
 }
 
-/* Prints the list iterator function for a declaration declared using the
- * SLIST_HEAD() macro. */
-void PrintListIteratorForSLIST_HEADDecl(clang::ASTContext &Ctx,
-                                        OpenBSDQueueMacroDecl SLIST_HEADDecl) {
-  auto DeclName = SLIST_HEADDecl.VarDecl->getNameAsString();
-  auto RecordDecl = SLIST_HEADDecl.RecordDecl;
-  const clang::FieldDecl *slh_firstFieldRecordDeclSLIST_ENTRYField;
-  auto slh_firstFieldDecl = *RecordDecl->field_begin();
-  auto slh_firstFieldRecordDecl =
-      slh_firstFieldDecl->getType()->getPointeeType()->getAsRecordDecl();
-
-  /* Find the field in the entry declaration that was expanded from
-   * SLIST_ENTRY(). */
-  using namespace clang::ast_matchers;
-  MatchFinder Finder;
-  FieldDeclarationMatcherCallback FDMC;
-  DeclarationMatcher SLIST_ENTRYMatcher = recordDecl(has(
-      fieldDecl(
-          hasType(recordDecl(isExpandedFromMacro(std::string("SLIST_ENTRY")))))
-          .bind("root")));
-  Finder.addMatcher(SLIST_ENTRYMatcher, &FDMC);
-  Finder.match(*slh_firstFieldRecordDecl, Ctx);
-  /* SLIST_ENTRY() should be called exactly once in the declaration of list's
-   * entry type. */
-  assert(1 == FDMC.Matches.size());
-  slh_firstFieldRecordDeclSLIST_ENTRYField = FDMC.Matches.front();
-
-  // NOTE(Brent): We assume that this is a decl of a struct.
-  llvm::outs() << std::format(
-      "{{\n    struct {} * __openbsd_list_iterator;\n    "
-      "SLIST_FOREACH(__openbsd_list_iterator, &{}, {}) {{\n",
-      slh_firstFieldRecordDecl->getNameAsString(), DeclName,
-      slh_firstFieldRecordDeclSLIST_ENTRYField->getNameAsString());
-  PrintPrintersForRecordDeclFields(8u, "__openbsd_list_iterator",
-                                   slh_firstFieldRecordDecl);
-  llvm::outs() << "    }\n}\n";
-}
-
-/* Prints the list iterator function for a declaration declared using the
- * LIST_HEAD() macro. */
 void PrintListIteratorForLIST_HEADDecl(clang::ASTContext &Ctx,
-                                        OpenBSDQueueMacroDecl LIST_HEADDecl) {
+                                       OpenBSDQueueMacroDecl LIST_HEADDecl,
+                                       const std::string& entryName) {
   auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
   auto RecordDecl = LIST_HEADDecl.RecordDecl;
   const clang::FieldDecl *lh_firstFieldRecordDeclLIST_ENTRYField;
@@ -216,30 +174,40 @@ void PrintListIteratorForLIST_HEADDecl(clang::ASTContext &Ctx,
   auto lh_firstFieldRecordDecl =
       lh_firstFieldDecl->getType()->getPointeeType()->getAsRecordDecl();
 
-  /* Find the field in the entry declaration that was expanded from
-   * LIST_ENTRY(). */
+  // Open a file based on the record name
+  std::ofstream file(std::string{"/usr/src/table_src/"} + DeclName + "_tbl.c");
+
+  if (!file.is_open()) {
+    llvm::errs() << "Error opening file: " << DeclName + "_tbl.c" << "\n";
+    return;
+  }
+
   using namespace clang::ast_matchers;
   MatchFinder Finder;
   FieldDeclarationMatcherCallback FDMC;
   DeclarationMatcher LIST_ENTRYMatcher = recordDecl(has(
       fieldDecl(
-          hasType(recordDecl(isExpandedFromMacro(std::string("LIST_ENTRY")))))
+          hasType(recordDecl(isExpandedFromMacro(std::string(entryName)))))
           .bind("root")));
   Finder.addMatcher(LIST_ENTRYMatcher, &FDMC);
   Finder.match(*lh_firstFieldRecordDecl, Ctx);
-  /* LIST_ENTRY() should be called exactly once in the declaration of list's
-   * entry type. */
   assert(1 == FDMC.Matches.size());
   lh_firstFieldRecordDeclLIST_ENTRYField = FDMC.Matches.front();
 
-  llvm::outs() << std::format(
+  llvm::outs() << "Processing file " << DeclName << '\n';
+
+  file << std::format(
       "{{\n    struct {} * __openbsd_list_iterator;\n    "
       "LIST_FOREACH(__openbsd_list_iterator, &{}, {}) {{\n",
       lh_firstFieldRecordDecl->getNameAsString(), DeclName,
       lh_firstFieldRecordDeclLIST_ENTRYField->getNameAsString());
+
   PrintPrintersForRecordDeclFields(8u, "__openbsd_list_iterator",
-                                   lh_firstFieldRecordDecl);
-  llvm::outs() << "    }\n}\n";
+                                   lh_firstFieldRecordDecl, file);
+
+  file << "    }\n}\n";
+
+  file.close();
 }
 
 /* We only define this constructor because Clang requires it. */
@@ -248,11 +216,17 @@ ASTConsumer::ASTConsumer(clang::CompilerInstance &CI) { (void)CI; }
 /* This is the method we have to override to tell Clang what do when we run our
 plugin. */
 void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
+  std::unordered_set<const clang::RecordDecl*> ProcessedRecords;
   auto first = true;
   /* Run the printer on every kind of OpenBSD list macro. */
   for (const auto &OpenBSDQueueMacroDeclName : OpenBSDQueueMacroDeclNames) {
     auto Matches = FindOpenBSDQueueMacroDecls(Ctx, OpenBSDQueueMacroDeclName);
     for (auto Match : Matches) {
+      if(ProcessedRecords.find(Match.RecordDecl) != ProcessedRecords.end()) {
+        llvm::outs() << "skipped declaration" << '\n'; 
+        continue;
+      }
+      ProcessedRecords.insert(Match.RecordDecl);
       /* Print a banner to separate different lists.
        *
        * TODO(Brent): Change the output format to something easily
@@ -263,9 +237,9 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       }
       /* TODO(Brent): Add printers for the other declaration macros. */
       if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        PrintListIteratorForSLIST_HEADDecl(Ctx, Match);
+        PrintListIteratorForLIST_HEADDecl(Ctx, Match, "SLIST_ENTRY");
       } else if("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        PrintListIteratorForLIST_HEADDecl(Ctx, Match);
+        PrintListIteratorForLIST_HEADDecl(Ctx, Match, "LIST_ENTRY");
       }
       first = false;
     }
