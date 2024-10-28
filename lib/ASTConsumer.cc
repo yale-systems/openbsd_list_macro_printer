@@ -210,6 +210,240 @@ void PrintListIteratorForLIST_HEADDecl(clang::ASTContext &Ctx,
   file.close();
 }
 
+std::ofstream OpenFile(OpenBSDQueueMacroDecl LIST_HEADDecl) {
+  auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
+  std::ofstream file(std::string{"/usr/src/table_src/"} + DeclName + "_tbl.c");
+
+  if (!file.is_open()) {
+    llvm::errs() << "Error opening file: " << DeclName + "_tbl.c" << "\n";
+    return std::ofstream{};
+  }
+
+  return file; 
+}
+
+void GenerateIncludePaths(std::ofstream& file) {
+  file << "#include <sys/types.h>\n"
+      << "\n"
+      << "#include \"osdb.h\"\n"
+      << "#include \"osdb_mod.h\"\n"
+      << "#include \"sqlite3ext.h\"\n"
+      << "#include \"vtab_common.h\"\n"
+      << "\n"
+      << "SQLITE_EXTENSION_INIT1\n\n";
+}
+
+void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
+                                         OpenBSDQueueMacroDecl LIST_HEADDecl,
+                                         const std::string& entryName,
+                                         std::ofstream& file) {
+  auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
+  auto RecordDecl = LIST_HEADDecl.RecordDecl;
+  // const clang::FieldDecl *lh_firstFieldRecordDeclLIST_ENTRYField;
+  auto lh_firstFieldDecl = *RecordDecl->field_begin();
+  auto lh_firstFieldRecordDecl =
+      lh_firstFieldDecl->getType()->getPointeeType()->getAsRecordDecl();
+
+  using namespace clang::ast_matchers;
+  MatchFinder Finder;
+  FieldDeclarationMatcherCallback FDMC;
+  DeclarationMatcher LIST_ENTRYMatcher = recordDecl(has(
+      fieldDecl(
+          hasType(recordDecl(isExpandedFromMacro(std::string(entryName)))))
+          .bind("root")));
+  Finder.addMatcher(LIST_ENTRYMatcher, &FDMC);
+  Finder.match(*lh_firstFieldRecordDecl, Ctx);
+  assert(1 == FDMC.Matches.size());
+  // lh_firstFieldRecordDeclLIST_ENTRYField = FDMC.Matches.front();
+
+  llvm::outs() << "Processing file " << DeclName << '\n';
+
+  // Generate enum for the columns based on struct fields
+  file << "enum col {\n";
+  unsigned int colIndex = 0;
+  for (const auto *field : lh_firstFieldRecordDecl->fields()) {
+    file << "    VT_" << DeclName << "_" << field->getNameAsString()
+         << " = " << colIndex++ << ",\n";
+  }
+  file << "    VT_" << DeclName << "_NUM_COLUMNS\n};\n\n";
+
+  // Start generating the function that will copy the struct fields to columns
+  file << "static int\n";
+  file << "copy_columns(struct " << DeclName << " *curEntry, osdb_value **columns, "
+       << "struct timespec *when, MD5_CTX *context) {\n\n";
+
+  // Iterate through the fields of the struct and generate code for assigning values
+  for (const auto *field : lh_firstFieldRecordDecl->fields()) {
+    // Check the type of the field to determine the correct function to use
+    auto fieldType = field->getType().getTypePtr(); 
+    if (fieldType->isEnumeralType()) {
+      file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
+      file << "new_osdb_int64(static_cast<int64_t>(curEntry->" 
+             << field->getNameAsString() << "), context); // TODO: need better enum representation \n";
+    } else if (fieldType->isIntegerType()) {
+      file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
+      file << "new_osdb_int64(curEntry->" << field->getNameAsString() << ", context);\n";
+    } else if (fieldType->isPointerType() && fieldType->getPointeeType()->isCharType()) {
+      file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
+      // Assuming string field is a char pointer
+      file << "new_osdb_text(curEntry->" << field->getNameAsString() << ", "
+           << "strlen(curEntry->" << field->getNameAsString() << ") + 1, context);\n";
+    } else {
+      file << "//    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
+      file << " TODO: Handle other types\n";
+    }
+  }
+
+  file << "\n    return 0;\n";
+  file << "}\n";
+
+}
+
+void GenerateVtabModule(std::ofstream& file, const std::string& recordName) {
+    file << "/*\n** This following structure defines all the methods for the\n"
+         << "** virtual table.\n*/\n";
+    file << "static sqlite3_module " << recordName << "vtabModule = {\n"
+         << "    /* iVersion    */ 0,\n"
+         << "    /* xCreate     */ commonCreate,\n"
+         << "    /* xConnect    */ commonConnect,\n"
+         << "    /* xBestIndex  */ " << recordName << "vtabBestIndex,\n"
+         << "    /* xDisconnect */ commonDisconnect,\n"
+         << "    /* xDestroy    */ commonDisconnect,\n"
+         << "    /* xOpen       */ commonOpen,\n"
+         << "    /* xClose      */ commonClose,\n"
+         << "    /* xFilter     */ commonFilter,\n"
+         << "    /* xNext       */ commonNext,\n"
+         << "    /* xEof        */ commonEof,\n"
+         << "    /* xColumn     */ commonColumn,\n"
+         << "    /* xRowid      */ " << recordName << "vtabRowid,\n"
+         << "    /* xUpdate     */ " << recordName << "vtabUpdate,\n"
+         << "    /* xBegin      */ 0,\n"
+         << "    /* xSync       */ 0,\n"
+         << "    /* xCommit     */ 0,\n"
+         << "    /* xRollback   */ 0,\n"
+         << "    /* xFindMethod */ 0,\n"
+         << "    /* xRename     */ 0,\n"
+         << "    /* xSavepoint  */ 0,\n"
+         << "    /* xRelease    */ 0,\n"
+         << "    /* xRollbackTo */ 0,\n"
+         << "    /* xShadowName */ 0,\n"
+         << "    /* xIntegrity  */ 0\n"
+         << "};\n\n";
+
+    file << "int\n"
+         << "sqlite3_" << recordName << "vtab_init(sqlite3 *db, char **pzErrMsg,\n"
+         << "    const sqlite3_api_routines *pApi, void *pAux)\n"
+         << "{\n"
+         << "    SQLITE_EXTENSION_INIT2(pApi);\n"
+         << "    return sqlite3_create_module(db,\n"
+         << "        vtable_type_to_name(((osdb_vtab *)pAux)->type), &" << recordName
+         << "vtabModule,\n"
+         << "        pAux);\n"
+         << "}\n";
+}
+
+void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
+                               const clang::RecordDecl *recordDecl,
+                               const clang::VarDecl *varDecl,
+                               std::ofstream& file) {
+  std::string recordName = recordDecl->getNameAsString();  // Get the struct type name
+  std::string varName = varDecl->getNameAsString();  // Get the allproc variable name
+
+  // Write the lock and unlock functions, replacing "proc" with the struct name
+  file << "void\nvtab_" << recordName << "_lock(void)\n{\n"
+       << "    sx_slock(&" << varName << "_lock);\n"
+       << "}\n\n";
+
+  file << "void\nvtab_" << recordName << "_unlock(void)\n{\n"
+       << "    sx_sunlock(&" << varName << "_lock);\n"
+       << "}\n\n";
+
+  // Write the snapshot function, replacing "proc" with the struct name
+  file << "void\nvtab_" << recordName << "_snapshot(sqlite3_vtab *pVtab, struct timespec when)\n"
+       << "{\n"
+       << "    struct " << recordName << " *prc = LIST_FIRST(&" << varName << ");\n\n"
+       << "    osdb_snap *snap = malloc(sizeof(struct osdb_snap), M_SQLITE, M_WAITOK);\n"
+       << "    snap->when = when;\n"
+       << "    snap->snap_table = new_osdb_table(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "    MD5Init(&snap->context);\n\n"
+       << "    while (prc) {\n"
+       << "        osdb_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "        if (!columns) {\n"
+       << "            return;\n"
+       << "        }\n"
+       << "        copy_columns(prc, columns, &snap->when, &snap->context);\n"
+       << "        osdb_table_push(snap->snap_table, columns);\n"
+       << "        prc = LIST_NEXT(prc, p_list);\n"
+       << "    }\n\n"
+       << "    MD5Final(snap->digest, &snap->context);\n"
+       << "#ifdef DEBUG\n"
+       << "    printf(\"" << recordName << " digest: \");\n"
+       << "    for (size_t i = 0; i < 16; i++) {\n"
+       << "        printf(\"%02hhx\", snap->digest[i]);\n"
+       << "    }\n"
+       << "    printf(\"\\n\");\n"
+       << "#endif\n"
+       << "    osdb_snapshot_rotate((struct osdb_vtab *)pVtab, snap);\n"
+       << "}\n\n";
+
+  // Write the Rowid function, replacing "proc" with the struct name
+  file << "static int\nvtab_" << recordName << "_rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
+       << "{\n"
+       << "    common_cursor *pCur = (common_cursor *)cur;\n"
+       << "    osdb_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
+       << "    *pRowid = pid_value->int64_value;\n"
+       << "    printf(\"" << recordName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
+       << "    return SQLITE_OK;\n"
+       << "}\n\n";
+
+  // Write the BestIndex function, replacing "proc" with the struct name
+  file << "static int\nvtab_" << recordName << "_bestindex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo)\n"
+       << "{\n"
+       << "    pIdxInfo->estimatedCost = (double)10;\n"
+       << "    pIdxInfo->estimatedRows = 10;\n"
+       << "    return SQLITE_OK;\n"
+       << "}\n\n";
+
+  // Write the Update function, replacing "proc" with the struct name
+  file << "static int\nvtab_" << recordName << "_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
+       << "{\n"
+       << "    struct timespec when;\n"
+       << "    nanotime(&when);\n"
+       << "    vtab_" << recordName << "_snapshot(pVTab, when);\n"
+       << "    if (osdb_snapshot_compare((struct osdb_vtab *)pVTab) <= 0) {\n"
+       << "#ifdef DEBUG\n"
+       << "        printf(\"" << recordName << " digest mismatch: UPDATE failed\\n\");\n"
+       << "#endif\n"
+       << "        return SQLITE_ABORT;\n"
+       << "    }\n\n"
+       << "    if ((argc == 1) && (argv[0] != NULL)) {\n"
+       << "        int p_pid = sqlite3_value_int64(argv[0]);\n"
+       << "#ifdef DEBUG\n"
+       << "        printf(\"argc %d argv[0] %d, rowID, %lld\\n\", argc, p_pid, *pRowid);\n"
+       << "        printf(\"Killing PID %d.\\n\", p_pid);\n"
+       << "#endif\n"
+       << "        kern_kill(curthread, p_pid, SIGKILL);\n"
+       << "        return SQLITE_OK;\n"
+       << "    }\n\n"
+       << "    if ((argc > 1) && (sqlite3_value_type(argv[0]) != SQLITE_NULL)) {\n"
+       << "        int core = sqlite3_value_int64(argv[2]);\n"
+       << "        int pid = sqlite3_value_int64(argv[5]);\n"
+       << "        cpuset_t *mask = malloc(sizeof(cpuset_t), M_TEMP, M_WAITOK | M_ZERO);\n"
+       << "#ifdef DEBUG\n"
+       << "        int row = sqlite3_value_int64(argv[0]);\n"
+       << "        printf(\"UPDATE row %d core %d pid %d\\n\", row, core, pid);\n"
+       << "#endif\n"
+       << "        CPU_SET(core, mask);\n"
+       << "        cpuset_setproc(pid, NULL, mask, NULL, false);\n"
+       << "        free(mask, M_TEMP);\n"
+       << "    }\n\n"
+       << "    return SQLITE_OK;\n"
+       << "}\n\n";
+
+  // Call the function to generate the sqlite3_module with the correct struct name
+  GenerateVtabModule(file, recordName);
+}
+
 /* We only define this constructor because Clang requires it. */
 ASTConsumer::ASTConsumer(clang::CompilerInstance &CI) { (void)CI; }
 
@@ -235,12 +469,19 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       if (!first) {
         llvm::outs() << std::string(80, '#') << '\n';
       }
+      std::ofstream openFile = OpenFile(Match);
+      if(!openFile.is_open()) {
+        continue; 
+      }
+      GenerateIncludePaths(openFile);
       /* TODO(Brent): Add printers for the other declaration macros. */
       if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        PrintListIteratorForLIST_HEADDecl(Ctx, Match, "SLIST_ENTRY");
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
       } else if("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        PrintListIteratorForLIST_HEADDecl(Ctx, Match, "LIST_ENTRY");
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "LIST_ENTRY", openFile);
       }
+      GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
+      openFile.close();
       first = false;
     }
   }
