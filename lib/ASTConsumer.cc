@@ -444,6 +444,62 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
   GenerateVtabModule(file, recordName);
 }
 
+void LogStructRelationships(const clang::RecordDecl *RecordDecl) {
+  std::ofstream file("/usr/src/table_src/struct_relationships.txt", std::ios::app);
+
+  if (!file.is_open()) {
+    llvm::errs() << "Error opening struct_relationships.txt\n";
+    return;
+  }
+
+  std::string currentStructName{}; 
+
+  const clang::RecordDecl *matchedStruct = nullptr;
+
+  // Find the first struct type pointed to by any field
+  for (const auto *FieldDecl : RecordDecl->fields()) {
+    const auto *fieldType = FieldDecl->getType().getTypePtr();
+
+    if (fieldType->isPointerType()) {
+      const auto *pointeeType = fieldType->getPointeeType()->getAsRecordDecl();
+      if (pointeeType && pointeeType->isStruct()) {
+        matchedStruct = pointeeType;
+        currentStructName = pointeeType->getNameAsString(); 
+        break; // Exit once the first matching struct is found
+      }
+    }
+  }
+
+  if (!matchedStruct) {
+    file.close();
+    return; // No matching struct found, nothing to log
+  }
+
+  // Iterate through the fields of the matched struct
+  std::vector<std::string> relatedStructs;
+  for (const auto *FieldDecl : matchedStruct->fields()) {
+    const auto *fieldType = FieldDecl->getType().getTypePtr();
+
+    if (fieldType->isPointerType()) {
+      const auto *pointeeType = fieldType->getPointeeType()->getAsRecordDecl();
+      if (pointeeType && pointeeType->isStruct()) {
+        relatedStructs.push_back(pointeeType->getNameAsString());
+      }
+    }
+  }
+
+  // Log the relationships to the file
+  if (!relatedStructs.empty()) {
+    file << currentStructName << ":";
+    for (const auto &relatedStruct : relatedStructs) {
+      file << " " << relatedStruct;
+    }
+    file << "\n";
+  }
+
+  file.close();
+}
+
 /* We only define this constructor because Clang requires it. */
 ASTConsumer::ASTConsumer(clang::CompilerInstance &CI) { (void)CI; }
 
@@ -461,6 +517,7 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         continue;
       }
       ProcessedRecords.insert(Match.RecordDecl);
+      LogStructRelationships(Match.RecordDecl);
       /* Print a banner to separate different lists.
        *
        * TODO(Brent): Change the output format to something easily
@@ -479,7 +536,11 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
       } else if("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "LIST_ENTRY", openFile);
-      }
+      } else if("TAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "TAILQ_ENTRY", openFile);
+      } else if("STAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "STAILQ_ENTRY", openFile);
+      } 
       GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
       openFile.close();
       first = false;
