@@ -297,7 +297,7 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
     auto fieldType = field->getType().getTypePtr(); 
     if (fieldType->isEnumeralType()) {
       file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
-      file << "new_dbsc_int64(static_cast<int64_t>(curEntry->" 
+      file << "new_dbsc_int64((int64_t)(curEntry->" 
              << field->getNameAsString() << "), context); // TODO: need better enum representation \n";
     } else if (fieldType->isIntegerType()) {
       file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
@@ -385,7 +385,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
     if (fieldType->isEnumeralType() || fieldType->isIntegerType()) {
       file << "           sqlite3_bind_int64(stmt, bindIndex++, entry->" << fieldName << ");\n";
     } else {
-      file << "           sqlite3_bind_text(stmt, bindIndex++, entry->" << fieldName << ");\n";
+      file << "           sqlite3_bind_text(stmt, bindIndex++, entry->" << fieldName << ", -1, SQLITE_TRANSIENT);\n";
     }
   }
 
@@ -507,7 +507,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "}\n\n";
   
   file << "extern int kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which, id_t id, cpuset_t *mask);\n"
-  file << "extern int cpuset_setproc(pid_t pid, struct cpuset *set, cpuset_t *mask, struct domainset *domain, bool rebase);\n"
+  file << "extern int cpuset_setproc(pid_t pid, struct cpuset *set, cpuset_t *mask, struct domainset *domain, bool rebase);\n\n"
 
   // Write the Update function, replacing "proc" with the struct name
   file << "static int\n" << elementTypeName << "vtabUpdate(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
