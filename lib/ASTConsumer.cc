@@ -382,7 +382,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    }\n\n"
        << "    MD5Final(snap->digest, &snap->context);\n"
        << "#ifdef DEBUG\n"
-       << "    printf(\"" << recordName << " digest: \");\n"
+       << "    printf(\"" << elementTypeName << " digest: \");\n"
        << "    for (size_t i = 0; i < 16; i++) {\n"
        << "        printf(\"%02hhx\", snap->digest[i]);\n"
        << "    }\n"
@@ -397,7 +397,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    common_cursor *pCur = (common_cursor *)cur;\n"
        << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
        << "    *pRowid = pid_value->int64_value;\n"
-       << "    printf(\"" << recordName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
+       << "    printf(\"" << elementTypeName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
        << "    return SQLITE_OK;\n"
        << "}\n\n";
 
@@ -417,7 +417,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    vtab_" << elementTypeName << "_snapshot(pVTab, when);\n"
        << "    if (osdb_snapshot_compare((struct osdb_vtab *)pVTab) <= 0) {\n"
        << "#ifdef DEBUG\n"
-       << "        printf(\"" << recordName << " digest mismatch: UPDATE failed\\n\");\n"
+       << "        printf(\"" << elementTypeName << " digest mismatch: UPDATE failed\\n\");\n"
        << "#endif\n"
        << "        return SQLITE_ABORT;\n"
        << "    }\n\n"
@@ -446,7 +446,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "}\n\n";
 
   // Call the function to generate the sqlite3_module with the correct struct name
-  GenerateVtabModule(file, recordName);
+  GenerateVtabModule(file, elementTypeName);
 }
 
 void LogStructRelationships(const clang::RecordDecl *RecordDecl) {
