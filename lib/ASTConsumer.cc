@@ -222,14 +222,27 @@ std::ofstream OpenFile(OpenBSDQueueMacroDecl LIST_HEADDecl) {
   return file; 
 }
 
-void GenerateIncludePaths(std::ofstream& file) {
+void GenerateIncludePaths(const clang::RecordDecl *recordDecl, std::ofstream& file) {
+  const clang::FieldDecl *firstField = *recordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
+
   file << "#include <sys/types.h>\n"
-      << "\n"
-      << "#include \"osdb.h\"\n"
-      << "#include \"osdb_mod.h\"\n"
-      << "#include \"sqlite3ext.h\"\n"
-      << "#include \"vtab_common.h\"\n"
-      << "#include <dbsc/value.h>\n"
+       << "#include <sys/systm.h>\n"
+       << "#include <sys/libkern.h>\n"
+       << "#include <sys/malloc.h>\n"
+       << "#include <sys/" << elementTypeName << ".h>\n"
+       << "#include <sys/signal.h>\n"
+       << "#include <sys/tty.h>\n"
+       << "\n"
+       << "#include <dbsc/value.h>"
+       << "\n"
+       << "#include \"osdb.h\"\n"
+       << "#include \"osdb_mod.h\"\n"
+       << "#include \"sqlite3ext.h\"\n"
+       << "#include \"vtab_common.h\"\n"
+       << "#include \"vtab_" << elementTypeName << ".h\"\n"
       << "\n"
       << "SQLITE_EXTENSION_INIT1\n\n";
 }
@@ -300,6 +313,91 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
 
 }
 
+void GenerateSerialize(clang::ASTContext &Ctx,
+                       const clang::RecordDecl *recordDecl,
+                       const clang::VarDecl *varDecl,
+                       std::ofstream &file) {
+  std::string varName = varDecl->getNameAsString();  // Get the allproc variable name
+  const clang::FieldDecl *firstField = *recordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
+
+  const std::string tableName = std::string("all_") + elementTypeName + "s";
+
+  file << "void vtab_" << elementTypeName << "_serialize(sqlite3 *real_db, struct timespec when) {\n";
+  file << "    struct " << elementTypeName << " *entry = LIST_FIRST(&" << varName << ");\n\n";
+
+  // === Create Table ===
+  file << "    const char *create_stmt =\n";
+  file << "        \"CREATE TABLE " << tableName << " (";
+
+  bool first = true;
+  std::vector<std::string> handledFields;
+  for (const auto *field : elementTypeRecord->fields()) {
+    auto fieldType = field->getType().getTypePtr();
+    if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() ||
+          (fieldType->isPointerType() && fieldType->getPointeeType()->isCharType())))
+      continue;
+
+    if (!first) file << ", ";
+    first = false;
+
+    std::string fieldName = field->getNameAsString();
+    handledFields.push_back(fieldName);
+
+    file << fieldName << " ";
+    if (fieldType->isEnumeralType() || fieldType->isIntegerType()) {
+      file << "INTEGER";
+    } else {
+      file << "TEXT";
+    }
+  }
+  file << ")\";\n";
+  file << "    char *errMsg = NULL;\n";
+  file << "    sqlite3_exec(real_db, create_stmt, NULL, NULL, &errMsg);\n\n";
+
+  // === Insert Statement ===
+  file << "    const char *insert_stmt = \"INSERT INTO " << tableName << " VALUES (";
+  for (size_t i = 0; i < handledFields.size(); ++i) {
+    if (i > 0) file << ", ";
+    file << "?";
+  }
+  file << ")\";\n";
+  file << "    sqlite3_stmt *stmt = NULL;\n";
+  file << "    sqlite3_prepare_v2(real_db, insert_stmt, -1, &stmt, NULL);\n\n";
+
+  // === While loop over linked list ===
+  file << "    while (entry) {\n";
+  file << "        osdb_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS);\n";
+
+  file << "        int bindIndex = 1;\n";
+  for (const auto &fieldName : handledFields) {
+    file << "        {\n";
+    file << "            osdb_value *val = columns[VT" << varName << "_" << fieldName << "];\n";
+    file << "            switch (val->type) {\n";
+    file << "                case INT64:\n";
+    file << "                    sqlite3_bind_int64(stmt, bindIndex++, val->int64_value);\n";
+    file << "                    break;\n";
+    file << "                case TEXT:\n";
+    file << "                    sqlite3_bind_text(stmt, bindIndex++, val->text_value, -1, SQLITE_STATIC);\n";
+    file << "                    break;\n";
+    file << "                default:\n";
+    file << "                    sqlite3_bind_null(stmt, bindIndex++);\n";
+    file << "                    break;\n";
+    file << "            }\n";
+    file << "        }\n";
+  }
+
+  file << "        sqlite3_step(stmt);\n";
+  file << "        sqlite3_reset(stmt);\n";
+  file << "        entry = LIST_NEXT(entry,  p_list);\n";
+  file << "    }\n\n";
+
+  file << "    sqlite3_finalize(stmt);\n";
+  file << "}\n\n";
+}
+
 void GenerateVtabModule(std::ofstream& file, const std::string& recordName) {
     file << "/*\n** This following structure defines all the methods for the\n"
          << "** virtual table.\n*/\n";
@@ -347,12 +445,11 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
                                const clang::RecordDecl *recordDecl,
                                const clang::VarDecl *varDecl,
                                std::ofstream& file) {
-  std::string recordName = recordDecl->getNameAsString();  // Get the struct type name
   std::string varName = varDecl->getNameAsString();  // Get the allproc variable name
   const clang::FieldDecl *firstField = *recordDecl->field_begin();
   const clang::RecordDecl *elementTypeRecord =
       firstField->getType()->getPointeeType()->getAsRecordDecl();
-  std::string elementTypeName = elementTypeRecord->getNameAsString();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
 
   // Write the lock and unlock functions, replacing "proc" with the struct name
   file << "void\nvtab_" << elementTypeName << "_lock(void)\n{\n"
@@ -395,7 +492,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
   file << "static int\nvtab_" << elementTypeName << "_rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
        << "{\n"
        << "    common_cursor *pCur = (common_cursor *)cur;\n"
-       << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
+       << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_p_pid];\n"
        << "    *pRowid = pid_value->int64_value;\n"
        << "    printf(\"" << elementTypeName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
        << "    return SQLITE_OK;\n"
@@ -535,7 +632,7 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       if(!openFile.is_open()) {
         continue; 
       }
-      GenerateIncludePaths(openFile);
+      GenerateIncludePaths(Match.RecordDecl, openFile);
       /* TODO(Brent): Add printers for the other declaration macros. */
       if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
@@ -549,6 +646,7 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "STAILQ_ENTRY", openFile);
       } 
       GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
+      GenerateSerialize(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
       openFile.close();
       first = false;
     }
