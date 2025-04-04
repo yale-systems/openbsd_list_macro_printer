@@ -229,6 +229,7 @@ void GenerateIncludePaths(std::ofstream& file) {
       << "#include \"osdb_mod.h\"\n"
       << "#include \"sqlite3ext.h\"\n"
       << "#include \"vtab_common.h\"\n"
+      << "#include <dbsc/value.h>\n"
       << "\n"
       << "SQLITE_EXTENSION_INIT1\n\n";
 }
@@ -269,7 +270,7 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
 
   // Start generating the function that will copy the struct fields to columns
   file << "static int\n";
-  file << "copy_columns(struct " << DeclName << " *curEntry, osdb_value **columns, "
+  file << "copy_columns(struct " << DeclName << " *curEntry, dbsc_value **columns, "
        << "struct timespec *when, MD5_CTX *context) {\n\n";
 
   // Iterate through the fields of the struct and generate code for assigning values
@@ -278,15 +279,15 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
     auto fieldType = field->getType().getTypePtr(); 
     if (fieldType->isEnumeralType()) {
       file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
-      file << "new_osdb_int64(static_cast<int64_t>(curEntry->" 
+      file << "new_dbsc_int64(static_cast<int64_t>(curEntry->" 
              << field->getNameAsString() << "), context); // TODO: need better enum representation \n";
     } else if (fieldType->isIntegerType()) {
       file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
-      file << "new_osdb_int64(curEntry->" << field->getNameAsString() << ", context);\n";
+      file << "new_dbsc_int64(curEntry->" << field->getNameAsString() << ", context);\n";
     } else if (fieldType->isPointerType() && fieldType->getPointeeType()->isCharType()) {
       file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
       // Assuming string field is a char pointer
-      file << "new_osdb_text(curEntry->" << field->getNameAsString() << ", "
+      file << "new_dbsc_text(curEntry->" << field->getNameAsString() << ", "
            << "strlen(curEntry->" << field->getNameAsString() << ") + 1, context);\n";
     } else {
       file << "//    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
@@ -371,7 +372,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    snap->snap_table = new_osdb_table(VT_" << varName << "_NUM_COLUMNS" << ");\n"
        << "    MD5Init(&snap->context);\n\n"
        << "    while (prc) {\n"
-       << "        osdb_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "        dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
        << "        if (!columns) {\n"
        << "            return;\n"
        << "        }\n"
@@ -394,7 +395,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
   file << "static int\nvtab_" << recordName << "_rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
        << "{\n"
        << "    common_cursor *pCur = (common_cursor *)cur;\n"
-       << "    osdb_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
+       << "    dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
        << "    *pRowid = pid_value->int64_value;\n"
        << "    printf(\"" << recordName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
        << "    return SQLITE_OK;\n"
