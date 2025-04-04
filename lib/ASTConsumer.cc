@@ -374,17 +374,17 @@ void GenerateSerialize(clang::ASTContext &Ctx,
 
   // === While loop over linked list ===
   file << "    while (entry) {\n";
-  file << "        osdb_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS);\n";
+  file << "        dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS);\n";
 
   file << "        int bindIndex = 1;\n";
   for (const auto &fieldName : handledFields) {
     file << "        {\n";
-    file << "            osdb_value *val = columns[VT" << varName << "_" << fieldName << "];\n";
+    file << "            dbsc_value *val = columns[VT" << varName << "_" << fieldName << "];\n";
     file << "            switch (val->type) {\n";
-    file << "                case INT64:\n";
+    file << "                case DBSC_INT64:\n";
     file << "                    sqlite3_bind_int64(stmt, bindIndex++, val->int64_value);\n";
     file << "                    break;\n";
-    file << "                case TEXT:\n";
+    file << "                case DBSC_TEXT:\n";
     file << "                    sqlite3_bind_text(stmt, bindIndex++, val->text_value, -1, SQLITE_STATIC);\n";
     file << "                    break;\n";
     file << "                default:\n";
