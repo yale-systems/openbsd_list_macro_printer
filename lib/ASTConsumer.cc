@@ -270,7 +270,7 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
 
   // Start generating the function that will copy the struct fields to columns
   file << "static int\n";
-  file << "copy_columns(struct " << DeclName << " *curEntry, dbsc_value **columns, "
+  file << "copy_columns(struct " << DeclName << " *curEntry, struct dbsc_value **columns, "
        << "struct timespec *when, MD5_CTX *context) {\n\n";
 
   // Iterate through the fields of the struct and generate code for assigning values
@@ -355,16 +355,16 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
   std::string elementTypeName = elementTypeRecord->getNameAsString();
 
   // Write the lock and unlock functions, replacing "proc" with the struct name
-  file << "void\nvtab_" << recordName << "_lock(void)\n{\n"
+  file << "void\nvtab_" << elementTypeName << "_lock(void)\n{\n"
        << "    sx_slock(&" << varName << "_lock);\n"
        << "}\n\n";
 
-  file << "void\nvtab_" << recordName << "_unlock(void)\n{\n"
+  file << "void\nvtab_" << elementTypeName << "_unlock(void)\n{\n"
        << "    sx_sunlock(&" << varName << "_lock);\n"
        << "}\n\n";
 
   // Write the snapshot function, replacing "proc" with the struct name
-  file << "void\nvtab_" << recordName << "_snapshot(sqlite3_vtab *pVtab, struct timespec when)\n"
+  file << "void\nvtab_" << elementTypeName << "_snapshot(sqlite3_vtab *pVtab, struct timespec when)\n"
        << "{\n"
        << "    struct " << elementTypeName << " *prc = LIST_FIRST(&" << varName << ");\n\n"
        << "    osdb_snap *snap = malloc(sizeof(struct osdb_snap), M_SQLITE, M_WAITOK);\n"
@@ -372,7 +372,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    snap->snap_table = new_osdb_table(VT_" << varName << "_NUM_COLUMNS" << ");\n"
        << "    MD5Init(&snap->context);\n\n"
        << "    while (prc) {\n"
-       << "        dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "        struct dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
        << "        if (!columns) {\n"
        << "            return;\n"
        << "        }\n"
@@ -392,17 +392,17 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "}\n\n";
 
   // Write the Rowid function, replacing "proc" with the struct name
-  file << "static int\nvtab_" << recordName << "_rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
+  file << "static int\nvtab_" << elementTypeName << "_rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
        << "{\n"
        << "    common_cursor *pCur = (common_cursor *)cur;\n"
-       << "    dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
+       << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_PID];\n"
        << "    *pRowid = pid_value->int64_value;\n"
        << "    printf(\"" << recordName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
        << "    return SQLITE_OK;\n"
        << "}\n\n";
 
   // Write the BestIndex function, replacing "proc" with the struct name
-  file << "static int\nvtab_" << recordName << "_bestindex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo)\n"
+  file << "static int\nvtab_" << elementTypeName << "_bestindex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo)\n"
        << "{\n"
        << "    pIdxInfo->estimatedCost = (double)10;\n"
        << "    pIdxInfo->estimatedRows = 10;\n"
@@ -410,11 +410,11 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "}\n\n";
 
   // Write the Update function, replacing "proc" with the struct name
-  file << "static int\nvtab_" << recordName << "_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
+  file << "static int\nvtab_" << elementTypeName << "_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
        << "{\n"
        << "    struct timespec when;\n"
        << "    nanotime(&when);\n"
-       << "    vtab_" << recordName << "_snapshot(pVTab, when);\n"
+       << "    vtab_" << elementTypeName << "_snapshot(pVTab, when);\n"
        << "    if (osdb_snapshot_compare((struct osdb_vtab *)pVTab) <= 0) {\n"
        << "#ifdef DEBUG\n"
        << "        printf(\"" << recordName << " digest mismatch: UPDATE failed\\n\");\n"
