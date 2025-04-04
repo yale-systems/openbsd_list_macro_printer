@@ -258,6 +258,11 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
   auto lh_firstFieldRecordDecl =
       lh_firstFieldDecl->getType()->getPointeeType()->getAsRecordDecl();
 
+  const clang::FieldDecl *firstField = *RecordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
+
   using namespace clang::ast_matchers;
   MatchFinder Finder;
   FieldDeclarationMatcherCallback FDMC;
@@ -283,7 +288,7 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
 
   // Start generating the function that will copy the struct fields to columns
   file << "static int\n";
-  file << "copy_columns(struct " << DeclName << " *curEntry, struct dbsc_value **columns, "
+  file << "copy_columns(struct " << elementTypeName << " *curEntry, struct dbsc_value **columns, "
        << "struct timespec *when, MD5_CTX *context) {\n\n";
 
   // Iterate through the fields of the struct and generate code for assigning values
@@ -488,8 +493,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    osdb_snapshot_rotate((struct osdb_vtab *)pVtab, snap);\n"
        << "}\n\n";
 
-  // Write the Rowid function, replacing "proc" with the struct name
-  file << "static int\nvtab_" << elementTypeName << "_rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
+  file << "static int\n" << elementTypeName << "vtabRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
        << "{\n"
        << "    common_cursor *pCur = (common_cursor *)cur;\n"
        << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_p_pid];\n"
@@ -499,7 +503,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "}\n\n";
 
   // Write the BestIndex function, replacing "proc" with the struct name
-  file << "static int\nvtab_" << elementTypeName << "_bestindex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo)\n"
+  file << "static int\n" << elementTypeName << "vtabBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo)\n"
        << "{\n"
        << "    pIdxInfo->estimatedCost = (double)10;\n"
        << "    pIdxInfo->estimatedRows = 10;\n"
@@ -507,7 +511,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "}\n\n";
 
   // Write the Update function, replacing "proc" with the struct name
-  file << "static int\nvtab_" << elementTypeName << "_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
+  file << "static int\n" << elementTypeName << "vtabUpdate(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
        << "{\n"
        << "    struct timespec when;\n"
        << "    nanotime(&when);\n"
