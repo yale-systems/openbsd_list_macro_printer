@@ -348,6 +348,10 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
                                std::ofstream& file) {
   std::string recordName = recordDecl->getNameAsString();  // Get the struct type name
   std::string varName = varDecl->getNameAsString();  // Get the allproc variable name
+  const clang::FieldDecl *firstField = *recordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString();
 
   // Write the lock and unlock functions, replacing "proc" with the struct name
   file << "void\nvtab_" << recordName << "_lock(void)\n{\n"
@@ -361,7 +365,7 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
   // Write the snapshot function, replacing "proc" with the struct name
   file << "void\nvtab_" << recordName << "_snapshot(sqlite3_vtab *pVtab, struct timespec when)\n"
        << "{\n"
-       << "    struct " << recordName << " *prc = LIST_FIRST(&" << varName << ");\n\n"
+       << "    struct " << elementTypeName << " *prc = LIST_FIRST(&" << varName << ");\n\n"
        << "    osdb_snap *snap = malloc(sizeof(struct osdb_snap), M_SQLITE, M_WAITOK);\n"
        << "    snap->when = when;\n"
        << "    snap->snap_table = new_osdb_table(VT_" << varName << "_NUM_COLUMNS" << ");\n"
@@ -537,8 +541,10 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       } else if("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "LIST_ENTRY", openFile);
       } else if("TAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        llvm::outs() << "TAILQ HEAD DECLARATION" << '\n'; 
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "TAILQ_ENTRY", openFile);
       } else if("STAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        llvm::outs() << "STAILQ HEAD DECLARATION" << '\n'; 
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "STAILQ_ENTRY", openFile);
       } 
       GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
