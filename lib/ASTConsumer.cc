@@ -236,7 +236,7 @@ void GenerateIncludePaths(const clang::RecordDecl *recordDecl, std::ofstream& fi
        << "#include <sys/signal.h>\n"
        << "#include <sys/tty.h>\n"
        << "\n"
-       << "#include <dbsc/value.h>"
+       << "#include <dbsc/value.h>\n"
        << "\n"
        << "#include \"osdb.h\"\n"
        << "#include \"osdb_mod.h\"\n"
@@ -338,7 +338,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
   file << "        \"CREATE TABLE " << tableName << " (";
 
   bool first = true;
-  std::vector<std::string> handledFields;
+  int colCount = 0;
   for (const auto *field : elementTypeRecord->fields()) {
     auto fieldType = field->getType().getTypePtr();
     if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() ||
@@ -349,7 +349,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
     first = false;
 
     std::string fieldName = field->getNameAsString();
-    handledFields.push_back(fieldName);
+    colCount++;
 
     file << fieldName << " ";
     if (fieldType->isEnumeralType() || fieldType->isIntegerType()) {
@@ -364,7 +364,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
 
   // === Insert Statement ===
   file << "    const char *insert_stmt = \"INSERT INTO " << tableName << " VALUES (";
-  for (size_t i = 0; i < handledFields.size(); ++i) {
+  for (size_t i = 0; i < colCount; ++i) {
     if (i > 0) file << ", ";
     file << "?";
   }
@@ -374,26 +374,22 @@ void GenerateSerialize(clang::ASTContext &Ctx,
 
   // === While loop over linked list ===
   file << "    while (entry) {\n";
-  file << "        dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS);\n";
-
   file << "        int bindIndex = 1;\n";
-  for (const auto &fieldName : handledFields) {
-    file << "        {\n";
-    file << "            dbsc_value *val = columns[VT" << varName << "_" << fieldName << "];\n";
-    file << "            switch (val->type) {\n";
-    file << "                case DBSC_INT64:\n";
-    file << "                    sqlite3_bind_int64(stmt, bindIndex++, val->int64_value);\n";
-    file << "                    break;\n";
-    file << "                case DBSC_TEXT:\n";
-    file << "                    sqlite3_bind_text(stmt, bindIndex++, val->text_value, -1, SQLITE_STATIC);\n";
-    file << "                    break;\n";
-    file << "                default:\n";
-    file << "                    sqlite3_bind_null(stmt, bindIndex++);\n";
-    file << "                    break;\n";
-    file << "            }\n";
-    file << "        }\n";
+  for (const auto *field : elementTypeRecord->fields()) {
+    auto fieldType = field->getType().getTypePtr();
+    if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() ||
+          (fieldType->isPointerType() && fieldType->getPointeeType()->isCharType())))
+      continue;
+
+    std::string fieldName = field->getNameAsString();
+    if (fieldType->isEnumeralType() || fieldType->isIntegerType()) {
+      file << "           sqlite3_bind_int64(stmt, bindIndex++, entry->" << fieldName << ");\n";
+    } else {
+      file << "           sqlite3_bind_text(stmt, bindIndex++, entry->" << fieldName << ");\n";
+    }
   }
 
+  file << "\n";
   file << "        sqlite3_step(stmt);\n";
   file << "        sqlite3_reset(stmt);\n";
   file << "        entry = LIST_NEXT(entry,  p_list);\n";
@@ -509,6 +505,9 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    pIdxInfo->estimatedRows = 10;\n"
        << "    return SQLITE_OK;\n"
        << "}\n\n";
+  
+  file << "extern int kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which, id_t id, cpuset_t *mask);\n"
+  file << "extern int cpuset_setproc(pid_t pid, struct cpuset *set, cpuset_t *mask, struct domainset *domain, bool rebase);\n"
 
   // Write the Update function, replacing "proc" with the struct name
   file << "static int\n" << elementTypeName << "vtabUpdate(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
@@ -657,3 +656,4 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
   }
 }
 } // namespace openbsd_list_macro_printer
+
