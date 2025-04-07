@@ -327,8 +327,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
   int colCount = 0;
   for (const auto *field : elementTypeRecord->fields()) {
     auto fieldType = field->getType().getTypePtr();
-    if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() ||
-          (fieldType->isPointerType() && fieldType->getPointeeType()->isCharType())))
+    if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() || fieldType->isPointerType()))
       continue;
 
     if (!first) file << ", ";
@@ -338,9 +337,10 @@ void GenerateSerialize(clang::ASTContext &Ctx,
     colCount++;
 
     file << fieldName << " ";
-    if (fieldType->isEnumeralType() || fieldType->isIntegerType()) {
+    if (fieldType->isEnumeralType() || fieldType->isIntegerType() || (fieldType->isPointerType() && !fieldType->getPointeeType()->isCharType())) {
       file << "INTEGER";
-    } else {
+    }
+    else {
       file << "TEXT";
     }
   }
@@ -368,7 +368,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
       continue;
 
     std::string fieldName = field->getNameAsString();
-    if (fieldType->isEnumeralType() || fieldType->isIntegerType()) {
+    if (fieldType->isEnumeralType() || fieldType->isIntegerType() || (fieldType->isPointerType() && !fieldType->getPointeeType()->isCharType())) {
       file << "           sqlite3_bind_int64(stmt, bindIndex++, entry->" << fieldName << ");\n";
     } else {
       file << "           sqlite3_bind_text(stmt, bindIndex++, entry->" << fieldName << ", -1, SQLITE_TRANSIENT);\n";
