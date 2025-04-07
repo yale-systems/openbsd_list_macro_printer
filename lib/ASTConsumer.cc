@@ -27,21 +27,10 @@ static const std::array<std::string, 6> OpenBSDQueueMacroDeclNames = {
 /* Represents a variable declaration whose type was declared using one of the
  * OpenBSD macros defined in `src/sys/sys/queue.h`. */
 struct OpenBSDQueueMacroDecl {
-  /* The name of the HEAD() macro invoked to create this declaration. One of:
-   * - SLIST_HEAD
-   * - LIST_HEAD
-   * - SIMPLEQ_HEAD
-   * - XSIMPLEQ_HEAD
-   * - TAILQ_HEAD
-   * - STAILQ_HEAD
-   * */
   std::string OpenBSDListDeclarationMacroName;
-
-  /* The record decl that this macro invocation declared. */
   const clang::RecordDecl *RecordDecl;
-
-  /* The variable that this macro invocation declared the type of. */
-  const clang::VarDecl *VarDecl;
+  const clang::VarDecl *VarDecl;    // non-null if this came from a varDecl
+  const clang::FieldDecl *FieldDecl; // non-null if this came from a fieldDecl
 };
 
 /* A matcher callback that collects FieldDecls. */
@@ -64,7 +53,7 @@ public:
 class OpenBSDListMacroDeclMatchCallback
     : public clang::ast_matchers::MatchFinder::MatchCallback {
 public:
-  /* The name of the OpenBSD list declaration macro that this macro should be
+ /* The name of the OpenBSD list declaration macro that this macro should be
    * collecting matches for. */
   std::string OpenBSDListDeclarationMacroName;
 
@@ -76,10 +65,14 @@ public:
 
   virtual void
   run(const clang::ast_matchers::MatchFinder::MatchResult &Result) final {
-    if (const auto VarDecl = Result.Nodes.getNodeAs<clang::VarDecl>("root")) {
-      const auto RecordDecl = VarDecl->getType()->getAsRecordDecl();
-      OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName,
-                                          RecordDecl, VarDecl};
+    if (const auto *VD = Result.Nodes.getNodeAs<clang::VarDecl>("root")) {
+      const auto *RD = VD->getType()->getAsRecordDecl();
+      OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName, RD, VD, nullptr};
+      Matches.push_back(MacroDecl);
+    } else if (const auto *FD = Result.Nodes.getNodeAs<clang::FieldDecl>("root")) {
+      // For a FieldDecl, get the record that was produced by the macro expansion.
+      const auto *RD = FD->getType()->getPointeeType()->getAsRecordDecl();
+      OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName, RD, nullptr, FD};
       Matches.push_back(MacroDecl);
     }
   }
@@ -94,26 +87,14 @@ FindOpenBSDQueueMacroDecls(clang::ASTContext &Ctx,
   using namespace clang::ast_matchers;
   MatchFinder Finder;
   OpenBSDListMacroDeclMatchCallback Callback(OpenBSDListDeclarationMacroName);
-  /* This matcher does most of the work. Here we are telling Clang to find all
-   * variable declarations having a type that is a record decl (e.g., a struct),
-   * whose declaration was expanded from a macro with the name
-   * `OpenBSDListDeclarationMacroName`. We then bind the matched declaration to
-   * the name "root" for the callback (defined above) to hook into.
-   *
-   * For instance, assuming "SLIST_HEAD" == OpenBSDListDeclarationMacroName,
-   * then for this line of code:
-   *
-   * ```c
-   * SLIST_HEAD(slisthead, entry) head = SLIST_HEAD_INITIALIZER(head);
-   * ```
-   *
-   * The matcher would match the declaration for `head`, and bind it to the name
-   * "root".
-   */
-  DeclarationMatcher Matcher =
+  DeclarationMatcher Matcher = anyOf(
       varDecl(hasType(recordDecl(isExpandedFromMacro(
                   std::string(OpenBSDListDeclarationMacroName)))))
-          .bind("root");
+          .bind("root"),
+      fieldDecl(hasType(recordDecl(isExpandedFromMacro(
+                  std::string(OpenBSDListDeclarationMacroName)))))
+          .bind("root")
+  );
   Finder.addMatcher(Matcher, &Callback);
   Finder.matchAST(Ctx);
   return Callback.Matches;
@@ -511,8 +492,8 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
        << "    return SQLITE_OK;\n"
        << "}\n\n";
   
-  file << "extern int kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which, id_t id, cpuset_t *mask);\n"
-  file << "extern int cpuset_setproc(pid_t pid, struct cpuset *set, cpuset_t *mask, struct domainset *domain, bool rebase);\n\n"
+  file << "extern int kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which, id_t id, cpuset_t *mask);\n";
+  file << "extern int cpuset_setproc(pid_t pid, struct cpuset *set, cpuset_t *mask, struct domainset *domain, bool rebase);\n\n";
 
   // Write the Update function, replacing "proc" with the struct name
   file << "static int\n" << elementTypeName << "vtabUpdate(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
@@ -553,6 +534,115 @@ void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
   // Call the function to generate the sqlite3_module with the correct struct name
   GenerateVtabModule(file, elementTypeName);
 }
+
+void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
+                                       const clang::RecordDecl *recordDecl,
+                                       const clang::FieldDecl *fieldDecl,
+                                       std::ofstream &file,
+                                       const std::string &parentStructName) {
+  std::string varName = fieldDecl->getNameAsString();  // Get the allproc variable name
+  const clang::FieldDecl *firstField = *recordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
+
+  // Write the lock and unlock functions, replacing "proc" with the struct name
+  file << "void\nvtab_" << elementTypeName << "_lock(void)\n{\n"
+       << "    sx_slock(&" << varName << "_lock);\n"
+       << "}\n\n";
+
+  file << "void\nvtab_" << elementTypeName << "_unlock(void)\n{\n"
+       << "    sx_sunlock(&" << varName << "_lock);\n"
+       << "}\n\n";
+
+  // Write the snapshot function, replacing "proc" with the struct name
+  file << "void\nvtab_" << elementTypeName << "_snapshot(sqlite3_vtab *pVtab, struct timespec when)\n"
+       << "{\n"
+       << "    struct " << elementTypeName << " *prc = LIST_FIRST(&" << varName << ");\n\n"
+       << "    osdb_snap *snap = malloc(sizeof(struct osdb_snap), M_SQLITE, M_WAITOK);\n"
+       << "    snap->when = when;\n"
+       << "    snap->snap_table = new_osdb_table(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "    MD5Init(&snap->context);\n\n"
+       << "    while (prc) {\n"
+       << "        struct dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "        if (!columns) {\n"
+       << "            return;\n"
+       << "        }\n"
+       << "        copy_columns(prc, columns, &snap->when, &snap->context);\n"
+       << "        osdb_table_push(snap->snap_table, columns);\n"
+       << "        prc = LIST_NEXT(prc, p_list);\n"
+       << "    }\n\n"
+       << "    MD5Final(snap->digest, &snap->context);\n"
+       << "#ifdef DEBUG\n"
+       << "    printf(\"" << elementTypeName << " digest: \");\n"
+       << "    for (size_t i = 0; i < 16; i++) {\n"
+       << "        printf(\"%02hhx\", snap->digest[i]);\n"
+       << "    }\n"
+       << "    printf(\"\\n\");\n"
+       << "#endif\n"
+       << "    osdb_snapshot_rotate((struct osdb_vtab *)pVtab, snap);\n"
+       << "}\n\n";
+
+  file << "static int\n" << elementTypeName << "vtabRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
+       << "{\n"
+       << "    common_cursor *pCur = (common_cursor *)cur;\n"
+       << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_p_pid];\n"
+       << "    *pRowid = pid_value->int64_value;\n"
+       << "    printf(\"" << elementTypeName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
+       << "    return SQLITE_OK;\n"
+       << "}\n\n";
+
+  // Write the BestIndex function, replacing "proc" with the struct name
+  file << "static int\n" << elementTypeName << "vtabBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo)\n"
+       << "{\n"
+       << "    pIdxInfo->estimatedCost = (double)10;\n"
+       << "    pIdxInfo->estimatedRows = 10;\n"
+       << "    return SQLITE_OK;\n"
+       << "}\n\n";
+  
+  file << "extern int kern_cpuset_setaffinity(struct thread *td, cpulevel_t level, cpuwhich_t which, id_t id, cpuset_t *mask);\n";
+  file << "extern int cpuset_setproc(pid_t pid, struct cpuset *set, cpuset_t *mask, struct domainset *domain, bool rebase);\n\n";
+
+  // Write the Update function, replacing "proc" with the struct name
+  file << "static int\n" << elementTypeName << "vtabUpdate(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv, sqlite_int64 *pRowid)\n"
+       << "{\n"
+       << "    struct timespec when;\n"
+       << "    nanotime(&when);\n"
+       << "    vtab_" << elementTypeName << "_snapshot(pVTab, when);\n"
+       << "    if (osdb_snapshot_compare((struct osdb_vtab *)pVTab) <= 0) {\n"
+       << "#ifdef DEBUG\n"
+       << "        printf(\"" << elementTypeName << " digest mismatch: UPDATE failed\\n\");\n"
+       << "#endif\n"
+       << "        return SQLITE_ABORT;\n"
+       << "    }\n\n"
+       << "    if ((argc == 1) && (argv[0] != NULL)) {\n"
+       << "        int p_pid = sqlite3_value_int64(argv[0]);\n"
+       << "#ifdef DEBUG\n"
+       << "        printf(\"argc %d argv[0] %d, rowID, %lld\\n\", argc, p_pid, *pRowid);\n"
+       << "        printf(\"Killing PID %d.\\n\", p_pid);\n"
+       << "#endif\n"
+       << "        kern_kill(curthread, p_pid, SIGKILL);\n"
+       << "        return SQLITE_OK;\n"
+       << "    }\n\n"
+       << "    if ((argc > 1) && (sqlite3_value_type(argv[0]) != SQLITE_NULL)) {\n"
+       << "        int core = sqlite3_value_int64(argv[2]);\n"
+       << "        int pid = sqlite3_value_int64(argv[5]);\n"
+       << "        cpuset_t *mask = malloc(sizeof(cpuset_t), M_TEMP, M_WAITOK | M_ZERO);\n"
+       << "#ifdef DEBUG\n"
+       << "        int row = sqlite3_value_int64(argv[0]);\n"
+       << "        printf(\"UPDATE row %d core %d pid %d\\n\", row, core, pid);\n"
+       << "#endif\n"
+       << "        CPU_SET(core, mask);\n"
+       << "        cpuset_setproc(pid, NULL, mask, NULL, false);\n"
+       << "        free(mask, M_TEMP);\n"
+       << "    }\n\n"
+       << "    return SQLITE_OK;\n"
+       << "}\n\n";
+
+  // Call the function to generate the sqlite3_module with the correct struct name
+  GenerateVtabModule(file, elementTypeName);
+}
+
 
 void LogStructRelationships(const clang::RecordDecl *RecordDecl) {
   std::ofstream file("/usr/src/table_src/struct_relationships.txt", std::ios::app);
@@ -618,42 +708,49 @@ plugin. */
 void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
   std::unordered_set<const clang::RecordDecl*> ProcessedRecords;
   auto first = true;
-  /* Run the printer on every kind of OpenBSD list macro. */
   for (const auto &OpenBSDQueueMacroDeclName : OpenBSDQueueMacroDeclNames) {
     auto Matches = FindOpenBSDQueueMacroDecls(Ctx, OpenBSDQueueMacroDeclName);
     for (auto Match : Matches) {
-      if(ProcessedRecords.find(Match.RecordDecl) != ProcessedRecords.end()) {
-        llvm::outs() << "skipped declaration" << '\n'; 
+      if (ProcessedRecords.find(Match.RecordDecl) != ProcessedRecords.end()) {
+        llvm::outs() << "skipped declaration" << '\n';
         continue;
       }
       ProcessedRecords.insert(Match.RecordDecl);
       LogStructRelationships(Match.RecordDecl);
-      /* Print a banner to separate different lists.
-       *
-       * TODO(Brent): Change the output format to something easily
-       * machine-readable like JSON.
-       */
       if (!first) {
         llvm::outs() << std::string(80, '#') << '\n';
       }
       std::ofstream openFile = OpenFile(Match);
-      if(!openFile.is_open()) {
-        continue; 
+      if (!openFile.is_open()) {
+        continue;
       }
       GenerateIncludePaths(Match.RecordDecl, openFile);
-      /* TODO(Brent): Add printers for the other declaration macros. */
       if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
-      } else if("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+      } else if ("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "LIST_ENTRY", openFile);
-      } else if("TAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        llvm::outs() << "TAILQ HEAD DECLARATION" << '\n'; 
+      } else if ("TAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        llvm::outs() << "TAILQ HEAD DECLARATION" << '\n';
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "TAILQ_ENTRY", openFile);
-      } else if("STAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        llvm::outs() << "STAILQ HEAD DECLARATION" << '\n'; 
+      } else if ("STAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        llvm::outs() << "STAILQ HEAD DECLARATION" << '\n';
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "STAILQ_ENTRY", openFile);
-      } 
-      GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
+      }
+      
+      // Call the appropriate vtab function based on whether we matched a varDecl or a fieldDecl.
+      if (Match.FieldDecl) {
+        // Retrieve the name of the parent struct that contains this field.
+        std::string parentStructName;
+        if (const auto *parent = llvm::dyn_cast<clang::RecordDecl>(Match.FieldDecl->getParent())) {
+          parentStructName = parent->getNameAsString();
+        }
+        GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructName);
+      } else {
+        GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
+      }
+      
+      // Note: GenerateSerialize still expects a VarDecl. If needed, you may also want to update
+      // GenerateSerialize to handle field declarations separately.
       GenerateSerialize(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
       openFile.close();
       first = false;
