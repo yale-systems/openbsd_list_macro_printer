@@ -307,9 +307,14 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
       // Assuming string field is a char pointer
       file << "new_dbsc_text(curEntry->" << field->getNameAsString() << ", "
            << "strlen(curEntry->" << field->getNameAsString() << ") + 1, context);\n";
+    } else if (fieldType->isPointerType()) {
+      // For all other pointer types, store as int64
+      file << "    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
+      file << "new_dbsc_int64((int64_t)(uintptr_t)curEntry->"
+          << field->getNameAsString() << ", context);\n";
     } else {
       file << "//    columns[VT_" << DeclName << "_" << field->getNameAsString() << "] = ";
-      file << " TODO: Handle other types\n";
+      file << " /* Unsupported type */\n";
     }
   }
 
@@ -364,7 +369,7 @@ void GenerateSerialize(clang::ASTContext &Ctx,
 
   // === Insert Statement ===
   file << "    const char *insert_stmt = \"INSERT INTO " << tableName << " VALUES (";
-  for (size_t i = 0; i < colCount; ++i) {
+  for (int i = 0; i < colCount; ++i) {
     if (i > 0) file << ", ";
     file << "?";
   }
