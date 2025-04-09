@@ -48,32 +48,39 @@ public:
   }
 };
 
-/* A matcher callback that collects RecordDecls declared using one of the
- * OpenBSD list declaration macro. */
 class OpenBSDListMacroDeclMatchCallback
     : public clang::ast_matchers::MatchFinder::MatchCallback {
 public:
- /* The name of the OpenBSD list declaration macro that this macro should be
+  /* The name of the OpenBSD list declaration macro that this callback should be
    * collecting matches for. */
   std::string OpenBSDListDeclarationMacroName;
 
   std::vector<OpenBSDQueueMacroDecl> Matches;
 
-  explicit OpenBSDListMacroDeclMatchCallback(
-      std::string OpenBSDListDeclarationMacroName)
-      : OpenBSDListDeclarationMacroName(OpenBSDListDeclarationMacroName){};
+  explicit OpenBSDListMacroDeclMatchCallback(std::string OpenBSDListDeclarationMacroName)
+      : OpenBSDListDeclarationMacroName(OpenBSDListDeclarationMacroName) {}
 
-  virtual void
-  run(const clang::ast_matchers::MatchFinder::MatchResult &Result) final {
+  virtual void run(const clang::ast_matchers::MatchFinder::MatchResult &Result) final {
+    // Check if the bound node is a VarDecl.
     if (const auto *VD = Result.Nodes.getNodeAs<clang::VarDecl>("root")) {
-      const auto *RD = VD->getType()->getAsRecordDecl();
-      OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName, RD, VD, nullptr};
-      Matches.push_back(MacroDecl);
-    } else if (const auto *FD = Result.Nodes.getNodeAs<clang::FieldDecl>("root")) {
-      // For a FieldDecl, get the record that was produced by the macro expansion.
-      const auto *RD = FD->getType()->getPointeeType()->getAsRecordDecl();
-      OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName, RD, nullptr, FD};
-      Matches.push_back(MacroDecl);
+      if (const auto *RD = VD->getType()->getAsRecordDecl()) {
+        OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName, RD, VD, nullptr};
+        Matches.push_back(MacroDecl);
+      }
+    }
+    // Otherwise, if the bound node is a FieldDecl.
+    if (const auto *FD = Result.Nodes.getNodeAs<clang::FieldDecl>("root")) {
+      const clang::RecordDecl *RD = nullptr;
+      // Check if the field type is a pointer type before getting the pointee.
+      if (FD->getType()->isPointerType())
+        RD = FD->getType()->getPointeeType()->getAsRecordDecl();
+      else
+        RD = FD->getType()->getAsRecordDecl();
+      
+      if (RD) {  // Only add if we have a valid record declaration.
+        OpenBSDQueueMacroDecl MacroDecl{OpenBSDListDeclarationMacroName, RD, nullptr, FD};
+        Matches.push_back(MacroDecl);
+      }
     }
   }
 };
@@ -89,16 +96,17 @@ FindOpenBSDQueueMacroDecls(clang::ASTContext &Ctx,
   OpenBSDListMacroDeclMatchCallback Callback(OpenBSDListDeclarationMacroName);
   DeclarationMatcher Matcher = anyOf(
       varDecl(hasType(recordDecl(isExpandedFromMacro(
-                  std::string(OpenBSDListDeclarationMacroName)))))
+                  OpenBSDListDeclarationMacroName))))
           .bind("root"),
       fieldDecl(hasType(recordDecl(isExpandedFromMacro(
-                  std::string(OpenBSDListDeclarationMacroName)))))
+                  OpenBSDListDeclarationMacroName))))
           .bind("root")
   );
   Finder.addMatcher(Matcher, &Callback);
   Finder.matchAST(Ctx);
   return Callback.Matches;
 }
+
 
 /* Tries to construct and print printf() calls for printing all the fields of
  * the pointer variable with the name `RecordDeclVarName` and base type
@@ -192,16 +200,32 @@ void PrintListIteratorForLIST_HEADDecl(clang::ASTContext &Ctx,
 }
 
 std::ofstream OpenFile(OpenBSDQueueMacroDecl LIST_HEADDecl) {
-  auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
-  std::ofstream file(std::string{"/usr/src/table_src/"} + DeclName + "_tbl.c");
+  // auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
+  const clang::FieldDecl *firstField = *LIST_HEADDecl.RecordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
+  std::ofstream file(std::string{"/usr/src/table_src/"} + elementTypeName + "_tbl.c");
 
   if (!file.is_open()) {
-    llvm::errs() << "Error opening file: " << DeclName + "_tbl.c" << "\n";
+    llvm::errs() << "Error opening file: " << elementTypeName + "_tbl.c" << "\n";
     return std::ofstream{};
   }
 
   return file; 
 }
+
+// std::ofstream OpenFileField(OpenBSDQueueMacroDecl LIST_HEADDecl) {
+//   auto DeclName = LIST_HEADDecl.FieldDecl->getNameAsString();
+//   std::ofstream file(std::string{"/usr/src/table_src/"} + DeclName + "_tbl.c");
+
+//   if (!file.is_open()) {
+//     llvm::errs() << "Error opening file: " << DeclName + "_tbl.c" << "\n";
+//     return std::ofstream{};
+//   }
+
+//   return file; 
+// }
 
 void GenerateIncludePaths(const clang::RecordDecl *recordDecl, std::ofstream& file) {
   const clang::FieldDecl *firstField = *recordDecl->field_begin();
@@ -232,7 +256,12 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
                                          OpenBSDQueueMacroDecl LIST_HEADDecl,
                                          const std::string& entryName,
                                          std::ofstream& file) {
-  auto DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
+  std::string DeclName;
+  if(LIST_HEADDecl.VarDecl) {
+    DeclName = LIST_HEADDecl.VarDecl->getNameAsString();
+  } else {
+    DeclName = LIST_HEADDecl.FieldDecl->getNameAsString();
+  }
   auto RecordDecl = LIST_HEADDecl.RecordDecl;
   // const clang::FieldDecl *lh_firstFieldRecordDeclLIST_ENTRYField;
   auto lh_firstFieldDecl = *RecordDecl->field_begin();
@@ -307,8 +336,14 @@ void GenerateColumnCopyFunctionForStruct(clang::ASTContext &Ctx,
 void GenerateSerialize(clang::ASTContext &Ctx,
                        const clang::RecordDecl *recordDecl,
                        const clang::VarDecl *varDecl,
+                       const clang::FieldDecl *fieldDecl,
                        std::ofstream &file) {
-  std::string varName = varDecl->getNameAsString();  // Get the allproc variable name
+  std::string varName;
+  if(varDecl) {
+    varName = varDecl->getNameAsString();  // Get the allproc variable name
+  } else {
+    varName = fieldDecl->getNameAsString();  // Get the allproc variable name
+  }
   const clang::FieldDecl *firstField = *recordDecl->field_begin();
   const clang::RecordDecl *elementTypeRecord =
       firstField->getType()->getPointeeType()->getAsRecordDecl();
@@ -720,7 +755,12 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       if (!first) {
         llvm::outs() << std::string(80, '#') << '\n';
       }
-      std::ofstream openFile = OpenFile(Match);
+      std::ofstream openFile; 
+      openFile = OpenFile(Match);
+      // if(Match.FieldDecl) {
+      //   openFile = OpenFileField(Match);
+      // } else {
+      // }
       if (!openFile.is_open()) {
         continue;
       }
@@ -741,17 +781,22 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       if (Match.FieldDecl) {
         // Retrieve the name of the parent struct that contains this field.
         std::string parentStructName;
-        if (const auto *parent = llvm::dyn_cast<clang::RecordDecl>(Match.FieldDecl->getParent())) {
-          parentStructName = parent->getNameAsString();
-        }
+        // auto parents = Ctx.getParents(*Match.FieldDecl);
+        // for (const auto &parent : parents) {
+        //   if (const auto *record = parent.get<clang::RecordDecl>()) {
+        //     parentStructName = record->getNameAsString();
+        //     break;
+        //   }
+        // }
+
+        llvm::outs() << "PROCESSING FIELD DECL" << '\n'; 
+        
         GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructName);
       } else {
         GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
       }
       
-      // Note: GenerateSerialize still expects a VarDecl. If needed, you may also want to update
-      // GenerateSerialize to handle field declarations separately.
-      GenerateSerialize(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
+      GenerateSerialize(Ctx, Match.RecordDecl, Match.VarDecl, Match.FieldDecl, openFile);
       openFile.close();
       first = false;
     }
