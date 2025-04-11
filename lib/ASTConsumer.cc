@@ -441,7 +441,7 @@ void GenerateSerializeForField(clang::ASTContext &Ctx,
   const std::string tableName = std::string("all_") + elementTypeName + "s";
 
   file << "void vtab_" << elementTypeName << "_serialize(sqlite3 *real_db, struct timespec when) {\n";
-  file << "    struct " << elementTypeName << " *entry = LIST_FIRST(&" << varName << ");\n\n";
+  file << "    struct " << parentStructName << " *entry = LIST_FIRST(&" << parentInstanceVarName << ");\n\n";
 
   // === Create Table ===
   file << "    const char *create_stmt =\n";
@@ -484,7 +484,9 @@ void GenerateSerializeForField(clang::ASTContext &Ctx,
 
   // === While loop over linked list ===
   file << "    while (entry) {\n";
-  file << "        int bindIndex = 1;\n";
+  file << "        struct " << elementTypeName << " *entry2 = TAILQ_FIRST(&entry->"<< varName <<");\n"
+  file << "        while (entry2) {\n"
+  file << "             int bindIndex = 1;\n";
   for (const auto *field : elementTypeRecord->fields()) {
     auto fieldType = field->getType().getTypePtr();
     if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() ||
@@ -493,15 +495,16 @@ void GenerateSerializeForField(clang::ASTContext &Ctx,
 
     std::string fieldName = field->getNameAsString();
     if (fieldType->isEnumeralType() || fieldType->isIntegerType() || (fieldType->isPointerType() && !fieldType->getPointeeType()->isCharType())) {
-      file << "           sqlite3_bind_int64(stmt, bindIndex++, entry->" << fieldName << ");\n";
+      file << "             sqlite3_bind_int64(stmt, bindIndex++, entry2->" << fieldName << ");\n";
     } else {
-      file << "           sqlite3_bind_text(stmt, bindIndex++, entry->" << fieldName << ", -1, SQLITE_TRANSIENT);\n";
+      file << "             sqlite3_bind_text(stmt, bindIndex++, entry2->" << fieldName << ", -1, SQLITE_TRANSIENT);\n";
     }
   }
-
+  file << "             sqlite3_step(stmt);\n";
+  file << "             sqlite3_reset(stmt);\n";
+  file << "             entry2 = TAILQ_NEXT(entry2, td_plist);\n"
+  file << "        }\n"
   file << "\n";
-  file << "        sqlite3_step(stmt);\n";
-  file << "        sqlite3_reset(stmt);\n";
   file << "        entry = LIST_NEXT(entry,  p_list);\n";
   file << "    }\n\n";
 
@@ -691,15 +694,15 @@ void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
        << "    MD5Init(&snap->context);\n\n"
        << "    while (entry) {\n"
        << "        struct " << elementTypeName << " *entry2 = TAILQ_FIRST(&entry->"<< varName <<");\n"
-       << "             while (entry2) {\n"
-       << "                  struct dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
-       << "                  if (!columns) {\n"
-       << "                       return;\n"
-       << "                  }\n"
-       << "                  copy_columns(entry2, columns, &snap->when, &snap->context);\n"
-       << "                  osdb_table_push(snap->snap_table, columns);\n"
-       << "                  entry2 = TAILQ_NEXT(entry2, td_plist);\n"
-       << "             }\n"
+       << "        while (entry2) {\n"
+       << "              struct dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "              if (!columns) {\n"
+       << "                    return;\n"
+       << "              }\n"
+       << "              copy_columns(entry2, columns, &snap->when, &snap->context);\n"
+       << "              osdb_table_push(snap->snap_table, columns);\n"
+       << "              entry2 = TAILQ_NEXT(entry2, td_plist);\n"
+       << "         }\n"
        << "        entry = LIST_NEXT(entry, p_list);\n"
        << "    }\n\n"
        << "    MD5Final(snap->digest, &snap->context);\n"
@@ -885,7 +888,6 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         }
 
         // Step 2: Iterate through top-level VarDecls to find one whose type matches the parent struct
-
         std::string parentInstanceVarName;
         for (auto decl : Ctx.getTranslationUnitDecl()->decls()) {
           if (const auto *varDecl = llvm::dyn_cast<clang::VarDecl>(decl)) {
