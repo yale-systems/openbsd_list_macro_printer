@@ -484,8 +484,8 @@ void GenerateSerializeForField(clang::ASTContext &Ctx,
 
   // === While loop over linked list ===
   file << "    while (entry) {\n";
-  file << "        struct " << elementTypeName << " *entry2 = TAILQ_FIRST(&entry->"<< varName <<");\n"
-  file << "        while (entry2) {\n"
+  file << "        struct " << elementTypeName << " *entry2 = TAILQ_FIRST(&entry->"<< varName <<");\n";
+  file << "        while (entry2) {\n";
   file << "             int bindIndex = 1;\n";
   for (const auto *field : elementTypeRecord->fields()) {
     auto fieldType = field->getType().getTypePtr();
@@ -502,8 +502,8 @@ void GenerateSerializeForField(clang::ASTContext &Ctx,
   }
   file << "             sqlite3_step(stmt);\n";
   file << "             sqlite3_reset(stmt);\n";
-  file << "             entry2 = TAILQ_NEXT(entry2, td_plist);\n"
-  file << "        }\n"
+  file << "             entry2 = TAILQ_NEXT(entry2, td_plist);\n";
+  file << "        }\n";
   file << "\n";
   file << "        entry = LIST_NEXT(entry,  p_list);\n";
   file << "    }\n\n";
