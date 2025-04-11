@@ -886,29 +886,44 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
 
         // Step 2: Iterate through top-level VarDecls to find one whose type matches the parent struct
         std::string parentInstanceVarName;
+        const clang::RecordDecl *parentStructDecl = nullptr;
+
+        // First, find the actual RecordDecl for the parentStructName
         for (auto decl : Ctx.getTranslationUnitDecl()->decls()) {
-          if (const auto *varDecl = llvm::dyn_cast<clang::VarDecl>(decl)) {
-            const clang::QualType type = varDecl->getType();
-            const clang::Type *typePtr = type.getTypePtrOrNull();
-            if (!typePtr) continue;
+          if (const auto *record = llvm::dyn_cast<clang::RecordDecl>(decl)) {
+            if (record->getNameAsString() == parentStructName) {
+              parentStructDecl = record;
+              break;
+            }
+          }
+        }
 
-            if (const auto *recordType = typePtr->getAsStructureType()) {
-              const auto *record = recordType->getDecl();
-              for (const auto *field : record->fields()) {
-                const clang::Type *fieldType = field->getType().getTypePtrOrNull();
-                if (!fieldType || !fieldType->isPointerType()) continue;
+        if (!parentStructDecl) {
+          llvm::errs() << "Could not find RecordDecl for " << parentStructName << "\n";
+        } else {
+          for (auto decl : Ctx.getTranslationUnitDecl()->decls()) {
+            if (const auto *varDecl = llvm::dyn_cast<clang::VarDecl>(decl)) {
+              const clang::QualType type = varDecl->getType();
+              const clang::Type *typePtr = type.getTypePtrOrNull();
+              if (!typePtr) continue;
 
-                const clang::Type *pointee = fieldType->getPointeeType().getTypePtrOrNull();
-                const auto *pointeeRecord = pointee ? pointee->getAsRecordDecl() : nullptr;
+              if (const auto *recordType = typePtr->getAsStructureType()) {
+                const auto *record = recordType->getDecl();
+                for (const auto *field : record->fields()) {
+                  const clang::Type *fieldType = field->getType().getTypePtrOrNull();
+                  if (!fieldType || !fieldType->isPointerType()) continue;
 
-                if (pointeeRecord && pointeeRecord->getNameAsString() == parentStructName) {
-                  parentInstanceVarName = varDecl->getNameAsString(); // e.g., "allproc"
-                  goto found; // break out of nested loop
+                  const auto *pointee = fieldType->getPointeeType()->getAsRecordDecl();
+                  if (pointee && pointee->getCanonicalDecl() == parentStructDecl->getCanonicalDecl()) {
+                    parentInstanceVarName = varDecl->getNameAsString();
+                    goto found;
+                  }
                 }
               }
             }
           }
         }
+
         found:;
 
         llvm::outs() << "PROCESSING FIELD DECL" << '\n'; 
