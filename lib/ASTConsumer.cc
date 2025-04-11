@@ -425,7 +425,8 @@ void GenerateSerializeForField(clang::ASTContext &Ctx,
                        const clang::VarDecl *varDecl,
                        const clang::FieldDecl *fieldDecl,
                        std::ofstream &file,
-                       const std::string &parentStructName) {
+                       const std::string &parentStructName,
+                       const std::string &parentInstanceVarName) {
   std::string varName;
   if(varDecl) {
     varName = varDecl->getNameAsString();  // Get the allproc variable name
@@ -664,7 +665,7 @@ void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
                                        const clang::FieldDecl *fieldDecl,
                                        std::ofstream &file,
                                        const std::string &parentStructName,
-                                       const std::String &parentInstanceVarName) {
+                                       const std::string &parentInstanceVarName) {
   std::string varName = fieldDecl->getNameAsString();  // Get the allproc variable name
   const clang::FieldDecl *firstField = *recordDecl->field_begin();
   const clang::RecordDecl *elementTypeRecord =
@@ -924,7 +925,7 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
 
         llvm::outs() << "PROCESSING FIELD DECL" << '\n'; 
         
-        GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructNam, parentInstanceVarName);
+        GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructName, parentInstanceVarName);
         GenerateSerializeForField(Ctx, Match.RecordDecl, Match.VarDecl, Match.FieldDecl, openFile, parentStructName, parentInstanceVarName);
       } else {
         GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
