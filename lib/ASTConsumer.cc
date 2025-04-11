@@ -420,6 +420,95 @@ void GenerateSerialize(clang::ASTContext &Ctx,
   file << "}\n\n";
 }
 
+void GenerateSerializeForField(clang::ASTContext &Ctx,
+                       const clang::RecordDecl *recordDecl,
+                       const clang::VarDecl *varDecl,
+                       const clang::FieldDecl *fieldDecl,
+                       std::ofstream &file,
+                       const std::string &parentStructName) {
+  std::string varName;
+  if(varDecl) {
+    varName = varDecl->getNameAsString();  // Get the allproc variable name
+  } else {
+    varName = fieldDecl->getNameAsString();  // Get the allproc variable name
+  }
+  const clang::FieldDecl *firstField = *recordDecl->field_begin();
+  const clang::RecordDecl *elementTypeRecord =
+      firstField->getType()->getPointeeType()->getAsRecordDecl();
+  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
+
+  const std::string tableName = std::string("all_") + elementTypeName + "s";
+
+  file << "void vtab_" << elementTypeName << "_serialize(sqlite3 *real_db, struct timespec when) {\n";
+  file << "    struct " << elementTypeName << " *entry = LIST_FIRST(&" << varName << ");\n\n";
+
+  // === Create Table ===
+  file << "    const char *create_stmt =\n";
+  file << "        \"CREATE TABLE " << tableName << " (";
+
+  bool first = true;
+  int colCount = 0;
+  for (const auto *field : elementTypeRecord->fields()) {
+    auto fieldType = field->getType().getTypePtr();
+    if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() || fieldType->isPointerType()))
+      continue;
+
+    if (!first) file << ", ";
+    first = false;
+
+    std::string fieldName = field->getNameAsString();
+    colCount++;
+
+    file << fieldName << " ";
+    if (fieldType->isEnumeralType() || fieldType->isIntegerType() || (fieldType->isPointerType() && !fieldType->getPointeeType()->isCharType())) {
+      file << "INTEGER";
+    }
+    else {
+      file << "TEXT";
+    }
+  }
+  file << ")\";\n";
+  file << "    char *errMsg = NULL;\n";
+  file << "    sqlite3_exec(real_db, create_stmt, NULL, NULL, &errMsg);\n\n";
+
+  // === Insert Statement ===
+  file << "    const char *insert_stmt = \"INSERT INTO " << tableName << " VALUES (";
+  for (int i = 0; i < colCount; ++i) {
+    if (i > 0) file << ", ";
+    file << "?";
+  }
+  file << ")\";\n";
+  file << "    sqlite3_stmt *stmt = NULL;\n";
+  file << "    sqlite3_prepare_v2(real_db, insert_stmt, -1, &stmt, NULL);\n\n";
+
+  // === While loop over linked list ===
+  file << "    while (entry) {\n";
+  file << "        int bindIndex = 1;\n";
+  for (const auto *field : elementTypeRecord->fields()) {
+    auto fieldType = field->getType().getTypePtr();
+    if (!(fieldType->isEnumeralType() || fieldType->isIntegerType() ||
+          (fieldType->isPointerType() && fieldType->getPointeeType()->isCharType())))
+      continue;
+
+    std::string fieldName = field->getNameAsString();
+    if (fieldType->isEnumeralType() || fieldType->isIntegerType() || (fieldType->isPointerType() && !fieldType->getPointeeType()->isCharType())) {
+      file << "           sqlite3_bind_int64(stmt, bindIndex++, entry->" << fieldName << ");\n";
+    } else {
+      file << "           sqlite3_bind_text(stmt, bindIndex++, entry->" << fieldName << ", -1, SQLITE_TRANSIENT);\n";
+    }
+  }
+
+  file << "\n";
+  file << "        sqlite3_step(stmt);\n";
+  file << "        sqlite3_reset(stmt);\n";
+  file << "        entry = LIST_NEXT(entry,  p_list);\n";
+  file << "    }\n\n";
+
+  file << "    sqlite3_finalize(stmt);\n";
+  file << "}\n\n";
+}
+
+
 void GenerateVtabModule(std::ofstream& file, const std::string& recordName) {
     file << "/*\n** This following structure defines all the methods for the\n"
          << "** virtual table.\n*/\n";
@@ -574,7 +663,8 @@ void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
                                        const clang::RecordDecl *recordDecl,
                                        const clang::FieldDecl *fieldDecl,
                                        std::ofstream &file,
-                                       const std::string &parentStructName) {
+                                       const std::string &parentStructName,
+                                       const std::String &parentInstanceVarName) {
   std::string varName = fieldDecl->getNameAsString();  // Get the allproc variable name
   const clang::FieldDecl *firstField = *recordDecl->field_begin();
   const clang::RecordDecl *elementTypeRecord =
@@ -593,19 +683,23 @@ void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
   // Write the snapshot function, replacing "proc" with the struct name
   file << "void\nvtab_" << elementTypeName << "_snapshot(sqlite3_vtab *pVtab, struct timespec when)\n"
        << "{\n"
-       << "    struct " << elementTypeName << " *prc = LIST_FIRST(&" << varName << ");\n\n"
+       << "    struct " << parentStructName << " *entry = LIST_FIRST(&" << parentInstanceVarName << ");\n\n"
        << "    osdb_snap *snap = malloc(sizeof(struct osdb_snap), M_SQLITE, M_WAITOK);\n"
        << "    snap->when = when;\n"
        << "    snap->snap_table = new_osdb_table(VT_" << varName << "_NUM_COLUMNS" << ");\n"
        << "    MD5Init(&snap->context);\n\n"
-       << "    while (prc) {\n"
-       << "        struct dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
-       << "        if (!columns) {\n"
-       << "            return;\n"
-       << "        }\n"
-       << "        copy_columns(prc, columns, &snap->when, &snap->context);\n"
-       << "        osdb_table_push(snap->snap_table, columns);\n"
-       << "        prc = LIST_NEXT(prc, p_list);\n"
+       << "    while (entry) {\n"
+       << "        struct " << elementTypeName << " *entry2 = TAILQ_FIRST(&entry->"<< varName <<");\n"
+       << "             while (entry2) {\n"
+       << "                  struct dbsc_value **columns = new_osdb_columns(VT_" << varName << "_NUM_COLUMNS" << ");\n"
+       << "                  if (!columns) {\n"
+       << "                       return;\n"
+       << "                  }\n"
+       << "                  copy_columns(entry2, columns, &snap->when, &snap->context);\n"
+       << "                  osdb_table_push(snap->snap_table, columns);\n"
+       << "                  entry2 = TAILQ_NEXT(entry2, td_plist);\n"
+       << "             }\n"
+       << "        entry = LIST_NEXT(entry, p_list);\n"
        << "    }\n\n"
        << "    MD5Final(snap->digest, &snap->context);\n"
        << "#ifdef DEBUG\n"
@@ -781,22 +875,62 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       if (Match.FieldDecl) {
         // Retrieve the name of the parent struct that contains this field.
         std::string parentStructName;
-        // auto parents = Ctx.getParents(*Match.FieldDecl);
-        // for (const auto &parent : parents) {
-        //   if (const auto *record = parent.get<clang::RecordDecl>()) {
-        //     parentStructName = record->getNameAsString();
-        //     break;
-        //   }
-        // }
+        auto parents = Ctx.getParents(*Match.FieldDecl);
+        for (const auto &parent : parents) {
+          if (const auto *record = parent.get<clang::RecordDecl>()) {
+            parentStructName = record->getNameAsString();
+            break;
+          }
+        }
+
+        // Step 2: Iterate through top-level VarDecls to find one whose type matches the parent struct
+        std::string parentInstanceVarName;
+        for (auto decl : Ctx.getTranslationUnitDecl()->decls()) {
+          if (const auto *varDecl = llvm::dyn_cast<clang::VarDecl>(decl)) {
+            const clang::QualType type = varDecl->getType();
+
+            // Direct struct match
+            if (const auto *record = type->getAsRecordDecl()) {
+              if (record->getNameAsString() == parentStructName) {
+                parentInstanceVarName = varDecl->getNameAsString(); // e.g., "allproc"
+                break;
+              }
+            }
+
+            // Pointer to struct
+            if (type->isPointerType()) {
+              const auto *pointee = type->getPointeeType().getTypePtrOrNull();
+              if (pointee) {
+                if (const auto *record = pointee->getAsRecordDecl()) {
+                  if (record->getNameAsString() == parentStructName) {
+                    parentInstanceVarName = varDecl->getNameAsString();
+                    break;
+                  }
+                }
+              }
+            }
+
+            // Handle typedefs or queue types (conservatively)
+            if (const auto *desugared = type->getUnqualifiedDesugaredType()) {
+              if (const auto *recordType = desugared->getAsStructureType()) {
+                if (recordType->getDecl()->getNameAsString() == parentStructName) {
+                  parentInstanceVarName = varDecl->getNameAsString();
+                  break;
+                }
+              }
+            }
+          }
+        }
 
         llvm::outs() << "PROCESSING FIELD DECL" << '\n'; 
         
-        GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructName);
+        GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructNam, parentInstanceVarName);
+        GenerateSerializeForField(Ctx, Match.RecordDecl, Match.VarDecl, Match.FieldDecl, openFile, parentStructName, parentInstanceVarName);
       } else {
         GenerateVtabProcFunctions(Ctx, Match.RecordDecl, Match.VarDecl, openFile);
+        GenerateSerialize(Ctx, Match.RecordDecl, Match.VarDecl, Match.FieldDecl, openFile);
       }
       
-      GenerateSerialize(Ctx, Match.RecordDecl, Match.VarDecl, Match.FieldDecl, openFile);
       openFile.close();
       first = false;
     }
