@@ -889,39 +889,27 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         for (auto decl : Ctx.getTranslationUnitDecl()->decls()) {
           if (const auto *varDecl = llvm::dyn_cast<clang::VarDecl>(decl)) {
             const clang::QualType type = varDecl->getType();
+            const clang::Type *typePtr = type.getTypePtrOrNull();
+            if (!typePtr) continue;
 
-            // Direct struct match
-            if (const auto *record = type->getAsRecordDecl()) {
-              if (record->getNameAsString() == parentStructName) {
-                parentInstanceVarName = varDecl->getNameAsString(); // e.g., "allproc"
-                break;
-              }
-            }
+            if (const auto *recordType = typePtr->getAsStructureType()) {
+              const auto *record = recordType->getDecl();
+              for (const auto *field : record->fields()) {
+                const clang::Type *fieldType = field->getType().getTypePtrOrNull();
+                if (!fieldType || !fieldType->isPointerType()) continue;
 
-            // Pointer to struct
-            if (type->isPointerType()) {
-              const auto *pointee = type->getPointeeType().getTypePtrOrNull();
-              if (pointee) {
-                if (const auto *record = pointee->getAsRecordDecl()) {
-                  if (record->getNameAsString() == parentStructName) {
-                    parentInstanceVarName = varDecl->getNameAsString();
-                    break;
-                  }
-                }
-              }
-            }
+                const clang::Type *pointee = fieldType->getPointeeType().getTypePtrOrNull();
+                const auto *pointeeRecord = pointee ? pointee->getAsRecordDecl() : nullptr;
 
-            // Handle typedefs or queue types (conservatively)
-            if (const auto *desugared = type->getUnqualifiedDesugaredType()) {
-              if (const auto *recordType = desugared->getAsStructureType()) {
-                if (recordType->getDecl()->getNameAsString() == parentStructName) {
-                  parentInstanceVarName = varDecl->getNameAsString();
-                  break;
+                if (pointeeRecord && pointeeRecord->getNameAsString() == parentStructName) {
+                  parentInstanceVarName = varDecl->getNameAsString(); // e.g., "allproc"
+                  goto found; // break out of nested loop
                 }
               }
             }
           }
         }
+        found:;
 
         llvm::outs() << "PROCESSING FIELD DECL" << '\n'; 
         
