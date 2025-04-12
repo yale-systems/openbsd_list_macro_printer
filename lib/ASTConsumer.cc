@@ -227,12 +227,7 @@ std::ofstream OpenFile(OpenBSDQueueMacroDecl LIST_HEADDecl) {
 //   return file; 
 // }
 
-void GenerateIncludePaths(const clang::RecordDecl *recordDecl, std::ofstream& file) {
-  const clang::FieldDecl *firstField = *recordDecl->field_begin();
-  const clang::RecordDecl *elementTypeRecord =
-      firstField->getType()->getPointeeType()->getAsRecordDecl();
-  std::string elementTypeName = elementTypeRecord->getNameAsString(); // proc
-
+void GenerateIncludePaths(const std::string &elementTypeName, std::ofstream& file) {
   file << "#include <sys/types.h>\n"
        << "#include <sys/systm.h>\n"
        << "#include <sys/libkern.h>\n"
@@ -553,7 +548,7 @@ void GenerateVtabModule(std::ofstream& file, const std::string& recordName) {
          << "        vtable_type_to_name(((osdb_vtab *)pAux)->type), &" << recordName
          << "vtabModule,\n"
          << "        pAux);\n"
-         << "}\n";
+         << "}\n\n";
 }
 
 void GenerateVtabProcFunctions(clang::ASTContext &Ctx,
@@ -677,11 +672,11 @@ void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
 
   // Write the lock and unlock functions, replacing "proc" with the struct name
   file << "void\nvtab_" << elementTypeName << "_lock(void)\n{\n"
-       << "    sx_slock(&" << varName << "_lock);\n"
+       << "    sx_slock(&" << parentInstanceVarName << "_lock);\n"
        << "}\n\n";
 
   file << "void\nvtab_" << elementTypeName << "_unlock(void)\n{\n"
-       << "    sx_sunlock(&" << varName << "_lock);\n"
+       << "    sx_sunlock(&" << parentInstanceVarName << "_lock);\n"
        << "}\n\n";
 
   // Write the snapshot function, replacing "proc" with the struct name
@@ -718,10 +713,6 @@ void GenerateVtabProcFunctionsForField(clang::ASTContext &Ctx,
 
   file << "static int\n" << elementTypeName << "vtabRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid)\n"
        << "{\n"
-       << "    common_cursor *pCur = (common_cursor *)cur;\n"
-       << "    struct dbsc_value *pid_value = pCur->row->columns[VT_" << varName << "_p_pid];\n"
-       << "    *pRowid = pid_value->int64_value;\n"
-       << "    printf(\"" << elementTypeName << "_rowid was called, returning %lld\\n\", *pRowid);\n"
        << "    return SQLITE_OK;\n"
        << "}\n\n";
 
@@ -862,23 +853,12 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
       if (!openFile.is_open()) {
         continue;
       }
-      GenerateIncludePaths(Match.RecordDecl, openFile);
-      if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
-      } else if ("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        GenerateColumnCopyFunctionForStruct(Ctx, Match, "LIST_ENTRY", openFile);
-      } else if ("TAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        llvm::outs() << "TAILQ HEAD DECLARATION" << '\n';
-        GenerateColumnCopyFunctionForStruct(Ctx, Match, "TAILQ_ENTRY", openFile);
-      } else if ("STAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
-        llvm::outs() << "STAILQ HEAD DECLARATION" << '\n';
-        GenerateColumnCopyFunctionForStruct(Ctx, Match, "STAILQ_ENTRY", openFile);
-      }
-      
-      // Call the appropriate vtab function based on whether we matched a varDecl or a fieldDecl.
+      std::string parentStructName;
+      std::string parentInstanceVarName;
+      std::string elementTypeName = Match.RecordDecl->field_begin()->getType()->getPointeeType()->getAsRecordDecl()->getNameAsString();
+
       if (Match.FieldDecl) {
         // Retrieve the name of the parent struct that contains this field.
-        std::string parentStructName;
         auto parents = Ctx.getParents(*Match.FieldDecl);
         for (const auto &parent : parents) {
           if (const auto *record = parent.get<clang::RecordDecl>()) {
@@ -887,8 +867,7 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
           }
         }
 
-        // Step 2: Iterate through top-level VarDecls to find one whose type matches the parent struct
-        std::string parentInstanceVarName;
+        // Iterate through top-level VarDecls to find one whose type matches the parent struct
         for (auto decl : Ctx.getTranslationUnitDecl()->decls()) {
           if (const auto *varDecl = llvm::dyn_cast<clang::VarDecl>(decl)) {
             const clang::QualType type = varDecl->getType();
@@ -919,9 +898,24 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         }
         found:
         ;
+      }
 
+      GenerateIncludePaths(parentStructName.empty() ? elementTypeName, openFile);
+      if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
+      } else if ("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "LIST_ENTRY", openFile);
+      } else if ("TAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        llvm::outs() << "TAILQ HEAD DECLARATION" << '\n';
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "TAILQ_ENTRY", openFile);
+      } else if ("STAILQ_HEAD" == Match.OpenBSDListDeclarationMacroName) {
+        llvm::outs() << "STAILQ HEAD DECLARATION" << '\n';
+        GenerateColumnCopyFunctionForStruct(Ctx, Match, "STAILQ_ENTRY", openFile);
+      }
+      
+      // Call the appropriate vtab function based on whether we matched a varDecl or a fieldDecl.
+      if (Match.FieldDecl) {
         llvm::outs() << "PROCESSING FIELD DECL" << '\n'; 
-        
         GenerateVtabProcFunctionsForField(Ctx, Match.RecordDecl, Match.FieldDecl, openFile, parentStructName, parentInstanceVarName);
         GenerateSerializeForField(Ctx, Match.RecordDecl, Match.VarDecl, Match.FieldDecl, openFile, parentStructName, parentInstanceVarName);
       } else {
