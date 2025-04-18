@@ -900,7 +900,7 @@ void ASTConsumer::HandleTranslationUnit(clang::ASTContext &Ctx) {
         ;
       }
 
-      GenerateIncludePaths(parentStructName.empty() ? elementTypeName, openFile);
+      GenerateIncludePaths(parentStructName.empty() ? elementTypeName : parentStructName, openFile);
       if ("SLIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
         GenerateColumnCopyFunctionForStruct(Ctx, Match, "SLIST_ENTRY", openFile);
       } else if ("LIST_HEAD" == Match.OpenBSDListDeclarationMacroName) {
